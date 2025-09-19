@@ -77,6 +77,7 @@ func saveRepos(db *sql.DB, repos []Repo, repoType string) {
 	}
 	tx.Commit()
 	setMeta(db, "last_"+repoType, time.Now().Format("2006-01-02 15:04"))
+	db.Exec("PRAGMA wal_checkpoint(FULL)")
 }
 
 func queryRepos(db *sql.DB, repoType, query string, limit int) []Repo {
@@ -119,6 +120,7 @@ func saveGists(db *sql.DB, gists []Gist) {
 	}
 	tx.Commit()
 	setMeta(db, "last_gists", time.Now().Format("2006-01-02 15:04"))
+	db.Exec("PRAGMA wal_checkpoint(FULL)")
 }
 
 func queryGists(db *sql.DB, query string, limit int) []Gist {
