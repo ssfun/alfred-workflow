@@ -20,9 +20,12 @@ func HandleStars(query string) []AlfredItem {
 			},
 			AlfredItem{
 				Title:    "♻ 刷新 Stars 缓存",
-				Subtitle: "当前缓存: " + getMeta(db, "last_stars"),
+				Subtitle: cacheInfo(db, "stars"),
 				Arg:      "refresh:stars",
 				Valid:    true,
+				Variables: map[string]string{
+                    "querysubtitle": cacheInfo(db, "stars"),
+                },
 			},
 		)
 	}
@@ -74,9 +77,12 @@ func HandleRepos(query string) []AlfredItem {
 			},
 			AlfredItem{
 				Title:    "♻ 刷新 Repos 缓存",
-				Subtitle: "当前缓存: " + getMeta(db, "last_repos"),
+				Subtitle: cacheInfo(db, "repos"),
 				Arg:      "refresh:repos",
 				Valid:    true,
+				Variables: map[string]string{
+                    "querysubtitle": cacheInfo(db, "repos"),
+                },
 			},
 		)
 	}
@@ -128,9 +134,12 @@ func HandleGists(query string) []AlfredItem {
 			},
 			AlfredItem{
 				Title:    "♻ 刷新 Gists 缓存",
-				Subtitle: "当前缓存: " + getMeta(db, "last_gists"),
+				Subtitle: cacheInfo(db, "gists"),
 				Arg:      "refresh:gists",
 				Valid:    true,
+				Variables: map[string]string{
+                    "querysubtitle": cacheInfo(db, "stars"),
+                },
 			},
 		)
 	}
