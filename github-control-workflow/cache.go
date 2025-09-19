@@ -2,8 +2,8 @@ package main
 
 import (
 	"database/sql"
-	"os"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,11 +11,24 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var dbPath = filepath.Join(os.Getenv("HOME"),
-	"Library", "Caches", "com.runningwithcrayons.Alfred", "github", "github_cache.db")
+func getCachePath() string {
+	// 优先从环境获取
+	cacheDir := os.Getenv("GITHUB_CACHE_DIR")
+	if cacheDir == "" {
+		bundleID := os.Getenv("alfred_workflow_bundleid")
+		if bundleID == "" {
+			bundleID = "default.githubwf"
+		}
+		cacheDir = filepath.Join(os.Getenv("HOME"),
+			"Library", "Caches", "com.runningwithcrayons.Alfred", bundleID)
+	}
+	os.MkdirAll(cacheDir, 0755)
+	return filepath.Join(cacheDir, "github_cache.db")
+}
+
+var dbPath = getCachePath()
 
 func initDB() *sql.DB {
-	os.MkdirAll(filepath.Dir(dbPath), 0755)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		panic(err)
@@ -50,7 +63,7 @@ func initDB() *sql.DB {
 	return db
 }
 
-// ---------- Repos ----------
+// ------------ Repos/Gists 存取逻辑 ------------
 func saveRepos(db *sql.DB, repos []Repo, repoType string) {
 	tx, _ := db.Begin()
 	tx.Exec("DELETE FROM repos WHERE type=?", repoType)
@@ -89,7 +102,6 @@ func queryRepos(db *sql.DB, repoType, query string, limit int) []Repo {
 	return res
 }
 
-// ---------- Gists ----------
 func saveGists(db *sql.DB, gists []Gist) {
 	tx, _ := db.Begin()
 	tx.Exec("DELETE FROM gists")
@@ -139,7 +151,7 @@ func queryGists(db *sql.DB, query string, limit int) []Gist {
 	return res
 }
 
-// ---------- Meta ----------
+// ------------ Meta & Utils ------------
 func getMeta(db *sql.DB, key string) string {
 	var val string
 	db.QueryRow("SELECT value FROM meta WHERE key=?", key).Scan(&val)
@@ -154,21 +166,4 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-// 获取缓存统计信息：数量 + 最近时间
-func cacheInfo(db *sql.DB, table string, t string) string {
-    count := 0
-    last := ""
-    switch t {
-    case "stars", "repos":
-        db.QueryRow("SELECT COUNT(*) FROM repos WHERE type=?", t).Scan(&count)
-    case "gists":
-        db.QueryRow("SELECT COUNT(*) FROM gists").Scan(&count)
-    }
-    last = getMeta(db, "last_"+t)
-    if last == "" {
-        return "无缓存"
-    }
-    return fmt.Sprintf("%d 条 · 最近更新 %s", count, last)
 }
