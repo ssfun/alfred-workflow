@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"os"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
