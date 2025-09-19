@@ -13,7 +13,7 @@ jobs:
     runs-on: macos-latest   # 使用 macOS runner (默认是 x86_64, 交叉编译 arm64)
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v4
