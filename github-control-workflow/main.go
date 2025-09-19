@@ -34,6 +34,8 @@ func main() {
 	} else if strings.HasPrefix(cmd, "reload:") {
 		t := strings.TrimPrefix(cmd, "reload:")
 		switch t {
+		case "searchrepo":
+            items = HandleSearchRepo(query)
 		case "repos":
 			items = HandleRepos("")
 		case "stars":
