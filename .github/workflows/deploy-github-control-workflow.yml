@@ -1,0 +1,54 @@
+# .github/workflows/build.yml
+
+# 工作流名称
+name: Build Github Control Workflow Go Binary
+
+# 工作流触发器
+on:
+  # 允许手动在 Actions 页面触发
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 使用最新的 Ubuntu 系统作为运行环境
+    runs-on: ubuntu-latest
+
+    steps:
+      # 第一步：检出代码
+      # 使用 actions/checkout action 来获取仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 第二步：设置 Go 环境
+      # 使用 actions/setup-go action 来安装和配置 Go
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # 指定 Go 版本，与你的 go.mod 文件保持一致
+          go-version: '1.18'
+
+      # 第三步：下载依赖
+      # 运行 go mod tidy 确保所有依赖都已下载和整理
+      - name: Install dependencies
+        run: go mod tidy
+        working-directory: ./github-control-workflow
+
+      # 第四步：编译二进制文件
+      # 使用 GOOS 和 GOARCH 环境变量进行交叉编译
+      - name: Build binary for Apple Silicon
+        run: |
+          # 编译适用于 Apple Silicon (M1/M2/M3) 的版本
+          GOOS=darwin GOARCH=arm64 go build -o githubwf .
+        working-directory: ./github-control-workflow
+
+      # 第五步：上传编译产物
+      # 使用 actions/upload-artifact action 来保存编译好的文件
+      # 这样你就可以在 Actions 运行结束后下载它们
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # 产物的名称
+          name: alfred-github-workflow-binary-arm64
+          # 需要上传的文件路径
+          path: githubwf
+        working-directory: ./github-control-workflow
