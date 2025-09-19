@@ -3,150 +3,134 @@ package main
 
 import (
 	"context"
-	"sync"
-	"time"
+	"fmt"
+	"net/http"
 
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
 )
 
-// 从环境变量中读取配置
 var (
-	githubUser = getEnv("GITHUB_USER", "")
+	githubUser = getEnv("GITHUB_USER", "default")
 	githubToken = getEnv("GITHUB_TOKEN", "")
-	maxRepos   = parseIntEnv("MAX_REPOS", 300)
-	maxStars   = parseIntEnv("MAX_STARS", 300) // 假设 star 和 repo 使用不同的最大值变量
-	maxGists   = parseIntEnv("MAX_GISTS", 100)
+	maxStars   = parseIntEnv(getEnv("MAX_REPOS", "300"))
+	maxRepos   = parseIntEnv(getEnv("MAX_REPOS", "300"))
+	maxGists   = parseIntEnv(getEnv("MAX_GISTS", "100"))
 )
 
-// getGitHubClient 根据环境变量中的 token 创建一个 GitHub API 客户端
+// getGitHubClient creates a new GitHub API client
 func getGitHubClient(ctx context.Context) *github.Client {
-	if githubToken == "" {
-		return github.NewClient(nil)
+	var tc *http.Client
+	if githubToken != "" {
+		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
+		tc = oauth2.NewClient(ctx, ts)
 	}
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
-	tc := oauth2.NewClient(ctx, ts)
 	return github.NewClient(tc)
 }
 
-// fetchAllPages 并发地从 GitHub API 获取所有分页数据
-func fetchAllPages[T any](ctx context.Context, fetchFunc func(page int) ([]T, *github.Response, error)) ([]T, error) {
-	var allItems []T
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	errs := make(chan error, 1)
-
-	// 先获取第一页来确定总页数
-	items, resp, err := fetchFunc(1)
+// fetchAll is a generic function to fetch all pages of a paginated GitHub API endpoint.
+func fetchAll[T any](ctx context.Context, initialURL string) ([]T, error) {
+	client := getGitHubClient(ctx)
+	req, err := client.NewRequest("GET", initialURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	allItems = append(allItems, items...)
 
-	if resp.LastPage > 1 {
-		for page := 2; page <= resp.LastPage; page++ {
-			wg.Add(1)
-			go func(p int) {
-				defer wg.Done()
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					pageItems, _, pageErr := fetchFunc(p)
-					if pageErr != nil {
-						select {
-						case errs <- pageErr:
-						default:
-						}
-						return
-					}
-					mu.Lock()
-					allItems = append(allItems, pageItems...)
-					mu.Unlock()
-				}
-			}(page)
+	var allItems []T
+	for {
+		var items []T
+		resp, err := client.Do(ctx, req, &items)
+		if err != nil {
+			return nil, err
 		}
+
+		allItems = append(allItems, items...)
+
+		if resp.NextPage == 0 {
+			break
+		}
+		req.URL.RawQuery = resp.Request.URL.RawQuery
+		req.URL.Path = fmt.Sprintf("/user/starred?page=%d", resp.NextPage)
 	}
-
-	wg.Wait()
-	close(errs)
-
-	if len(errs) > 0 {
-		return nil, <-errs
-	}
-
 	return allItems, nil
 }
 
-// fetchStars 获取用户收藏的仓库
+// fetchStars fetches all starred repositories for the user.
 func fetchStars(ctx context.Context) ([]*github.Repository, error) {
 	client := getGitHubClient(ctx)
+	var allRepos []*github.Repository
 	opts := &github.ActivityListStarredOptions{ListOptions: github.ListOptions{PerPage: 100}}
 
-	starredRepos, err := fetchAllPages(ctx, func(page int) ([]*github.StarredRepository, *github.Response, error) {
-		opts.Page = page
-		// "starred" 表示按收藏时间排序
-		opts.Sort = "created"
-		opts.Direction = "desc"
-		starred, resp, err := client.Activity.ListStarred(ctx, githubUser, opts)
-		return starred, resp, err
-	})
-	if err != nil {
-		return nil, err
+	for {
+		repos, resp, err := client.Activity.ListStarred(ctx, "", opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range repos {
+			allRepos = append(allRepos, r.Repository)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
-
-	// 关键修复：从 StarredRepository 中提取出 Repository
-	var repos []*github.Repository
-	for _, starred := range starredRepos {
-		repos = append(repos, starred.Repository)
-	}
-
-	if len(repos) > maxStars {
-		return repos[:maxStars], nil
-	}
-	return repos, nil
+	return allRepos, nil
 }
 
-// fetchRepos 获取用户自己的仓库
+// fetchRepos fetches all repositories for the user.
 func fetchRepos(ctx context.Context) ([]*github.Repository, error) {
 	client := getGitHubClient(ctx)
-	opts := &github.RepositoryListOptions{
-		ListOptions: github.ListOptions{PerPage: 100},
-		Sort:        "pushed", // 按推送时间排序
-		Direction:   "desc",
-	}
+	var allRepos []*github.Repository
+	opts := &github.RepositoryListOptions{ListOptions: github.ListOptions{PerPage: 100}}
 
-	repos, err := fetchAllPages(ctx, func(page int) ([]*github.Repository, *github.Response, error) {
-		opts.Page = page
-		r, resp, err := client.Repositories.List(ctx, githubUser, opts)
-		return r, resp, err
-	})
-	if err != nil {
-		return nil, err
+	for {
+		repos, resp, err := client.Repositories.List(ctx, "", opts)
+		if err != nil {
+			return nil, err
+		}
+		allRepos = append(allRepos, repos...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
-
-	if len(repos) > maxRepos {
-		return repos[:maxRepos], nil
-	}
-	return repos, nil
+	return allRepos, nil
 }
 
-// fetchGists 获取用户的 Gists
+// fetchGists fetches all gists for the user.
 func fetchGists(ctx context.Context) ([]*github.Gist, error) {
 	client := getGitHubClient(ctx)
+	var allGists []*github.Gist
 	opts := &github.GistListOptions{ListOptions: github.ListOptions{PerPage: 100}}
 
-	gists, err := fetchAllPages(ctx, func(page int) ([]*github.Gist, *github.Response, error) {
-		opts.Page = page
-		g, resp, err := client.Gists.List(ctx, githubUser, opts)
-		return g, resp, err
-	})
+	for {
+		gists, resp, err := client.Gists.List(ctx, "", opts)
+		if err != nil {
+			return nil, err
+		}
+		allGists = append(allGists, gists...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allGists, nil
+}
+
+// SearchPublicRepos searches for public repositories on GitHub.
+func SearchPublicRepos(ctx context.Context, query string) ([]*github.Repository, error) {
+	client := getGitHubClient(ctx)
+	opts := &github.SearchOptions{
+		Sort:  "stars",
+		Order: "desc",
+		ListOptions: github.ListOptions{
+			PerPage: 30, // Alfred doesn't need more than this for a quick search
+		},
+	}
+	result, _, err := client.Search.Repositories(ctx, query, opts)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(gists) > maxGists {
-		return gists[:maxGists], nil
-	}
-	return gists, nil
+	return result.Repositories, nil
 }
+
