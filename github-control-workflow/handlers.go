@@ -4,6 +4,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/go-github/v39/github"
@@ -13,7 +15,6 @@ import (
 func handleStars(query string) {
 	wf := NewWorkflow()
 
-	// 如果没有查询词，显示默认菜单项
 	if query == "" {
 		wf.NewItem("🌐 打开 GitHub Stars 页面").
 			SetSubtitle(fmt.Sprintf("https://github.com/%s?tab=stars", githubUser)).
@@ -25,7 +26,6 @@ func handleStars(query string) {
 		return
 	}
 
-	// 1. 从缓存查询
 	repos, err := queryRepos("stars", query, maxStars)
 	if err != nil {
 		wf.NewItem("查询缓存失败").SetSubtitle(err.Error()).SetValid(false)
@@ -33,8 +33,8 @@ func handleStars(query string) {
 		return
 	}
 
-	// 2. 如果缓存为空，则从 API 获取
-	if len(repos) == 0 {
+	// 只有在缓存为空且用户确实输入了搜索词时才触发 API 调用
+	if len(repos) == 0 && query != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		fresh, fetchErr := fetchStars(ctx)
@@ -43,14 +43,13 @@ func handleStars(query string) {
 			wf.SendFeedback()
 			return
 		}
-		// 保存到缓存
 		if err := saveRepos(fresh, "stars"); err != nil {
 			wf.NewItem("保存缓存失败").SetSubtitle(err.Error()).SetValid(false)
 		}
-		repos = fresh // 使用新获取的数据
+		// 保存后再次查询，以应用搜索条件
+		repos, _ = queryRepos("stars", query, maxStars)
 	}
 
-	// 3. 将结果转换为 Alfred Items
 	for _, r := range repos {
 		wf.NewItem(r.GetFullName()).
 			SetSubtitle(formatSubtitle(r.GetStargazersCount(), r.GetUpdatedAt().Time, r.GetDescription())).
@@ -89,7 +88,7 @@ func handleRepos(query string) {
 		return
 	}
 
-	if len(repos) == 0 {
+	if len(repos) == 0 && query != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		fresh, fetchErr := fetchRepos(ctx)
@@ -101,7 +100,7 @@ func handleRepos(query string) {
 		if err := saveRepos(fresh, "repos"); err != nil {
 			wf.NewItem("保存缓存失败").SetSubtitle(err.Error()).SetValid(false)
 		}
-		repos = fresh
+		repos, _ = queryRepos("repos", query, maxRepos)
 	}
 
 	for _, r := range repos {
@@ -146,7 +145,7 @@ func handleGists(query string) {
 		return
 	}
 
-	if len(gists) == 0 {
+	if len(gists) == 0 && query != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		fresh, fetchErr := fetchGists(ctx)
@@ -158,13 +157,20 @@ func handleGists(query string) {
 		if err := saveGists(fresh); err != nil {
 			wf.NewItem("保存 Gist 缓存失败").SetSubtitle(err.Error()).SetValid(false)
 		}
-		gists = fresh
+		gists, _ = queryGists(query, maxGists)
 	}
 
 	for _, g := range gists {
 		title := g.GetDescription()
 		if title == "" {
-			title = "无描述的 Gist"
+			// 如果没有描述，尝试使用第一个文件名作为标题
+			for fname := range g.Files {
+				title = string(fname)
+				break
+			}
+			if title == "" {
+				title = g.GetID() // 如果连文件都没有，最后才使用 ID
+			}
 		}
 		if !g.GetPublic() {
 			title += " 🔒"
@@ -175,7 +181,7 @@ func handleGists(query string) {
 			filenames = append(filenames, string(filename))
 		}
 
-		subtitle := fmt.Sprintf("%d 个文件: %s | 更新于 %s", len(filenames), time.Time(g.GetUpdatedAt()).Format("2006-01-02"))
+		subtitle := fmt.Sprintf("%d 个文件 | 更新于 %s", len(filenames), g.GetUpdatedAt().Format("2006-01-02"))
 
 		wf.NewItem(title).
 			SetSubtitle(subtitle).
@@ -191,9 +197,52 @@ func handleGists(query string) {
 	wf.SendFeedback()
 }
 
-// handleCacheCtl 处理缓存控制命令，如 'refresh:stars'
-func handleCacheCtl(arg string) {
+// handleSearchRepo 处理 'search-repo' 子命令，这是一个纯 API 调用，不涉及缓存
+func handleSearchRepo(query string) {
 	wf := NewWorkflow()
+
+	if query == "" {
+		wf.NewItem("请输入关键词进行搜索").SetValid(false)
+		wf.SendFeedback()
+		return
+	}
+
+	// 顶部添加入口：在浏览器中打开搜索结果
+	searchURL := "https://github.com/search?q=" + url.QueryEscape(query) + "&type=repositories"
+	wf.NewItem("✪ 在 GitHub 打开搜索结果").
+		SetSubtitle(searchURL).
+		SetArg(searchURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repos, err := searchRepos(ctx, query)
+	if err != nil {
+		wf.NewItem("搜索仓库失败").SetSubtitle(err.Error()).SetValid(false)
+		wf.SendFeedback()
+		return
+	}
+
+	for _, r := range repos {
+		if r.GetFork() || r.GetArchived() {
+			continue
+		}
+		wf.NewItem(r.GetFullName()).
+			SetSubtitle(formatSubtitle(r.GetStargazersCount(), r.GetPushedAt().Time, r.GetDescription())).
+			SetArg(r.GetHTMLURL()).
+			SetMatch(normalize(r.GetFullName()+" "+r.GetDescription())).
+			SetCmdModifier(r.GetCloneURL(), "复制 Clone URL").
+			SetAltModifier(r.GetHTMLURL(), "复制 Repo URL")
+	}
+
+	if len(repos) == 0 {
+		wf.NewItem(fmt.Sprintf("✖ 未找到匹配结果: %s", query)).SetValid(false)
+	}
+
+	wf.SendFeedback()
+}
+
+// handleCacheCtl 处理缓存控制命令
+func handleCacheCtl(arg string) {
 	parts := strings.Split(arg, ":")
 	if len(parts) != 2 {
 		return // 无效参数，不做任何事
@@ -202,11 +251,12 @@ func handleCacheCtl(arg string) {
 
 	if action == "refresh" {
 		if err := clearCache(cacheType); err != nil {
-			wf.NewItem(fmt.Sprintf("清除 %s 缓存失败", cacheType)).SetSubtitle(err.Error()).SetValid(false)
-			wf.SendFeedback()
+			// 在 Alfred 中显示错误
+			fmt.Printf(`{"items":[{"title":"清除 %s 缓存失败","subtitle":"%s","valid":false}]}`, cacheType, err.Error())
 			return
 		}
-		// 这里可以通过 osascript 触发 Alfred 的外部刷新，但为了简化，我们仅提示用户
-		fmt.Printf("缓存 '%s' 已清空，请重新运行命令以刷新。", cacheType)
+		// 直接输出成功信息给用户，Alfred 会将其显示为通知
+		fmt.Printf("缓存 '%s' 已清空。请重新运行命令以刷新。", cacheType)
 	}
 }
+
