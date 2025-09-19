@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
@@ -20,7 +21,7 @@ func HandleClearCache() {
 	// Stars
 	items = append(items, AlfredItem{
 		Title:    "🧹 清除 Stars 缓存",
-		Subtitle: "当前缓存: " + getMeta(db, "last_stars"),
+		Subtitle: cacheInfo(db, "repos", "stars"),
 		Arg:      "clear:stars",
 		Valid:    true,
 	})
@@ -28,7 +29,7 @@ func HandleClearCache() {
 	// Repos
 	items = append(items, AlfredItem{
 		Title:    "🧹 清除 Repos 缓存",
-		Subtitle: "当前缓存: " + getMeta(db, "last_repos"),
+		Subtitle: cacheInfo(db, "repos", "repos"),
 		Arg:      "clear:repos",
 		Valid:    true,
 	})
@@ -36,7 +37,7 @@ func HandleClearCache() {
 	// Gists
 	items = append(items, AlfredItem{
 		Title:    "🧹 清除 Gists 缓存",
-		Subtitle: "当前缓存: " + getMeta(db, "last_gists"),
+		Subtitle: cacheInfo(db, "gists", "gists"),
 		Arg:      "clear:gists",
 		Valid:    true,
 	})
