@@ -59,11 +59,7 @@ func main() {
             HandleClearCache()
             return
         case "cachectl":
-            msg := HandleCacheCtl(query)
-            items = []AlfredItem{{
-                Title: msg,
-                Valid: false,
-            }}
+            items = HandleCacheCtl(query)
 		default:
 			items = []AlfredItem{{
 				Title:    "未知命令",
