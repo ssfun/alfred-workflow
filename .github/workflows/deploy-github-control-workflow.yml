@@ -1,7 +1,7 @@
 # .github/workflows/build.yml
 
 # 工作流名称
-name: Build Go Binary
+name: Build Github Control Workflow Go Binary
 
 # 工作流触发器
 on:
@@ -25,7 +25,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           # 指定 Go 版本，与你的 go.mod 文件保持一致
-          go-version: '1.18'
+          go-version: '1.22'
 
       # 第三步：下载依赖
       # 运行 go mod tidy 确保所有依赖都已下载和整理
