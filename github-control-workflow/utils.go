@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"strconv"
 	"strings"
 )
 
@@ -17,4 +19,12 @@ func formatDate(s string) string {
 		return s[:10]
 	}
 	return s
+}
+
+func getenvInt(k string, def int) int {
+	v := os.Getenv(k)
+	if n, err := strconv.Atoi(v); err == nil {
+		return n
+	}
+	return def
 }
