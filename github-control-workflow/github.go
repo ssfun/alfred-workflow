@@ -1,171 +1,152 @@
+// github.go
 package main
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
 	"sync"
 	"time"
 
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
 )
 
+// 从环境变量中读取配置
 var (
-	githubUser  = getEnv("GITHUB_USER", "")
+	githubUser = getEnv("GITHUB_USER", "")
 	githubToken = getEnv("GITHUB_TOKEN", "")
-	maxRepos    = parseInt(getEnv("MAX_REPOS", "300"), 300)
-	maxGists    = parseInt(getEnv("MAX_GISTS", "100"), 100)
-	maxResults  = parseInt(getEnv("MAX_RESULTS", "30"), 30)
+	maxRepos   = parseIntEnv("MAX_REPOS", 300)
+	maxStars   = parseIntEnv("MAX_STARS", 300) // 假设 star 和 repo 使用不同的最大值变量
+	maxGists   = parseIntEnv("MAX_GISTS", 100)
 )
 
-type GitHubClient struct {
-	*github.Client
+// getGitHubClient 根据环境变量中的 token 创建一个 GitHub API 客户端
+func getGitHubClient(ctx context.Context) *github.Client {
+	if githubToken == "" {
+		return github.NewClient(nil)
+	}
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
+	tc := oauth2.NewClient(ctx, ts)
+	return github.NewClient(tc)
 }
 
-func newGitHubClient() *GitHubClient {
-	var httpClient *http.Client
-	if githubToken != "" {
-		ctx := context.Background()
-		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
-		httpClient = oauth2.NewClient(ctx, ts)
-	}
-	return &GitHubClient{
-		Client: github.NewClient(httpClient),
-	}
-}
-
-// fetchAllPages 并发获取所有分页数据
-func (c *GitHubClient) fetchAllPages(fetcher func(page int) ([]interface{}, *github.Response, error)) ([]interface{}, error) {
-	var allItems []interface{}
+// fetchAllPages 并发地从 GitHub API 获取所有分页数据
+func fetchAllPages[T any](ctx context.Context, fetchFunc func(page int) ([]T, *github.Response, error)) ([]T, error) {
+	var allItems []T
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	errChan := make(chan error, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	errs := make(chan error, 1)
 
-	// 先获取第一页，得到总页数
-	items, resp, err := fetcher(1)
+	// 先获取第一页来确定总页数
+	items, resp, err := fetchFunc(1)
 	if err != nil {
 		return nil, err
 	}
 	allItems = append(allItems, items...)
 
-	if resp.LastPage == 0 { // 如果没有分页
-		return allItems, nil
-	}
-
-	for page := 2; page <= resp.LastPage; page++ {
-		wg.Add(1)
-		go func(p int) {
-			defer wg.Done()
-			select {
-			case <-ctx.Done():
-				return // 超时或取消
-			default:
-				pageItems, _, pageErr := fetcher(p)
-				if pageErr != nil {
-					select {
-					case errChan <- pageErr:
-					default:
-					}
+	if resp.LastPage > 1 {
+		for page := 2; page <= resp.LastPage; page++ {
+			wg.Add(1)
+			go func(p int) {
+				defer wg.Done()
+				select {
+				case <-ctx.Done():
 					return
+				default:
+					pageItems, _, pageErr := fetchFunc(p)
+					if pageErr != nil {
+						select {
+						case errs <- pageErr:
+						default:
+						}
+						return
+					}
+					mu.Lock()
+					allItems = append(allItems, pageItems...)
+					mu.Unlock()
 				}
-				mu.Lock()
-				allItems = append(allItems, pageItems...)
-				mu.Unlock()
-			}
-		}(page)
+			}(page)
+		}
 	}
 
 	wg.Wait()
-	close(errChan)
+	close(errs)
 
-	if err := <-errChan; err != nil {
-		return nil, err
+	if len(errs) > 0 {
+		return nil, <-errs
 	}
+
 	return allItems, nil
 }
 
-func (c *GitHubClient) FetchStars() ([]*github.Repository, error) {
-	log.Println("Fetching stars from GitHub API...")
-	var allRepos []*github.Repository
+// fetchStars 获取用户收藏的仓库
+func fetchStars(ctx context.Context) ([]*github.Repository, error) {
+	client := getGitHubClient(ctx)
 	opts := &github.ActivityListStarredOptions{ListOptions: github.ListOptions{PerPage: 100}}
 
-	for {
-		repos, resp, err := c.Activity.ListStarred(context.Background(), "", opts)
-		if err != nil {
-			return nil, err
-		}
-		allRepos = append(allRepos, repos...)
-		if resp.NextPage == 0 || len(allRepos) >= maxRepos {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-	return allRepos[:min(len(allRepos), maxRepos)], nil
-}
-
-func (c *GitHubClient) FetchRepos() ([]*github.Repository, error) {
-	log.Println("Fetching repos from GitHub API...")
-	var allRepos []*github.Repository
-	opts := &github.RepositoryListOptions{Affiliation: "owner", ListOptions: github.ListOptions{PerPage: 100}}
-
-	for {
-		repos, resp, err := c.Repositories.List(context.Background(), "", opts)
-		if err != nil {
-			return nil, err
-		}
-		allRepos = append(allRepos, repos...)
-		if resp.NextPage == 0 || len(allRepos) >= maxRepos {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-	return allRepos[:min(len(allRepos), maxRepos)], nil
-}
-
-func (c *GitHubClient) FetchGists() ([]*github.Gist, error) {
-	log.Println("Fetching gists from GitHub API...")
-	var allGists []*github.Gist
-	opts := &github.GistListOptions{ListOptions: github.ListOptions{PerPage: 100}}
-
-	for {
-		gists, resp, err := c.Gists.List(context.Background(), "", opts)
-		if err != nil {
-			return nil, err
-		}
-		allGists = append(allGists, gists...)
-		if resp.NextPage == 0 || len(allGists) >= maxGists {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-	return allGists[:min(len(allGists), maxGists)], nil
-}
-
-func (c *GitHubClient) SearchRepos(query string) ([]*github.Repository, error) {
-	log.Printf("Searching repos with query: %s\n", query)
-	opts := &github.SearchOptions{ListOptions: github.ListOptions{PerPage: maxResults}}
-	result, _, err := c.Search.Repositories(context.Background(), query, opts)
+	starredRepos, err := fetchAllPages(ctx, func(page int) ([]*github.StarredRepository, *github.Response, error) {
+		opts.Page = page
+		// "starred" 表示按收藏时间排序
+		opts.Sort = "created"
+		opts.Direction = "desc"
+		starred, resp, err := client.Activity.ListStarred(ctx, githubUser, opts)
+		return starred, resp, err
+	})
 	if err != nil {
 		return nil, err
 	}
-	// 过滤掉 fork 和 archived 的
+
+	// 关键修复：从 StarredRepository 中提取出 Repository
 	var repos []*github.Repository
-	for _, r := range result.Repositories {
-		if !r.GetFork() && !r.GetArchived() {
-			repos = append(repos, r)
-		}
+	for _, starred := range starredRepos {
+		repos = append(repos, starred.Repository)
+	}
+
+	if len(repos) > maxStars {
+		return repos[:maxStars], nil
 	}
 	return repos, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// fetchRepos 获取用户自己的仓库
+func fetchRepos(ctx context.Context) ([]*github.Repository, error) {
+	client := getGitHubClient(ctx)
+	opts := &github.RepositoryListOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+		Sort:        "pushed", // 按推送时间排序
+		Direction:   "desc",
 	}
-	return b
+
+	repos, err := fetchAllPages(ctx, func(page int) ([]*github.Repository, *github.Response, error) {
+		opts.Page = page
+		r, resp, err := client.Repositories.List(ctx, githubUser, opts)
+		return r, resp, err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(repos) > maxRepos {
+		return repos[:maxRepos], nil
+	}
+	return repos, nil
+}
+
+// fetchGists 获取用户的 Gists
+func fetchGists(ctx context.Context) ([]*github.Gist, error) {
+	client := getGitHubClient(ctx)
+	opts := &github.GistListOptions{ListOptions: github.ListOptions{PerPage: 100}}
+
+	gists, err := fetchAllPages(ctx, func(page int) ([]*github.Gist, *github.Response, error) {
+		opts.Page = page
+		g, resp, err := client.Gists.List(ctx, githubUser, opts)
+		return g, resp, err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(gists) > maxGists {
+		return gists[:maxGists], nil
+	}
+	return gists, nil
 }
