@@ -5,10 +5,6 @@ name: Build Go Binary
 
 # 工作流触发器
 on:
-  # 当推送到 main 分支时触发
-  push:
-    branches:
-      - main
   # 允许手动在 Actions 页面触发
   workflow_dispatch:
 
