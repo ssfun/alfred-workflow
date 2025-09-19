@@ -55,6 +55,15 @@ func main() {
 			items = HandleRepos(query)
 		case "gists":
 			items = HandleGists(query)
+		case "clearcache":
+            HandleClearCache()
+            return
+        case "cachectl":
+            msg := HandleCacheCtl(query)
+            items = []AlfredItem{{
+                Title: msg,
+                Valid: false,
+            }}
 		default:
 			items = []AlfredItem{{
 				Title:    "未知命令",
