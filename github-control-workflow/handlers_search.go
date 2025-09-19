@@ -95,7 +95,7 @@ func HandleSearchRepo(query string) []AlfredItem {
 		if desc == "" {
 			desc = "(无描述)"
 		}
-		sub := fmt.Sprintf("⭐ %d · 更新时间 %s · %s", r.Stars, formatDate(r.PushedAt), desc)
+		sub := fmt.Sprintf("★ %d · 更新时间 %s · %s", r.Stars, formatDate(r.PushedAt), desc)
 		items = append(items, AlfredItem{
 			Title:    r.FullName,
 			Subtitle: sub,
