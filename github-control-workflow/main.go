@@ -1,3 +1,4 @@
+// main.go
 package main
 
 import (
@@ -7,56 +8,40 @@ import (
 )
 
 func main() {
-	// 初始化 Alfred Workflow 输出器
-	wf := NewWorkflow()
-
 	if len(os.Args) < 2 {
+		wf := NewWorkflow()
 		wf.NewItem("无效命令").
-			Subtitle("请提供一个子命令: stars, repos, gists, search-repos, cache-ctl").
-			Valid(false)
+			SetSubtitle("请提供一个子命令, 例如: stars, repos, gists, search-repo").
+			SetValid(false)
 		wf.SendFeedback()
 		return
 	}
 
-	command := os.Args[1]
+	// 解析命令行参数
+	// os.Args[0] 是程序名, os.Args[1] 是子命令
+	cmd := os.Args[1]
 	query := ""
 	if len(os.Args) > 2 {
-		query = strings.Join(os.Args[2:], " ")
+		query = os.Args[2]
 	}
 
-	// 初始化数据库
-	err := initDB()
-	if err != nil {
-		wf.NewItem("数据库初始化失败").
-			Subtitle(err.Error()).
-			Valid(false)
-		wf.SendFeedback()
-		return
-	}
-	defer closeDB()
-
-	// 根据命令路由到不同的处理器
-	var handlerErr error
-	switch command {
-	case "stars":
-		handlerErr = handleStars(wf, query)
-	case "repos":
-		handlerErr = handleRepos(wf, query)
-	case "gists":
-		handlerErr = handleGists(wf, query)
-	case "search-repos":
-		handlerErr = handleSearchRepos(wf, query)
-	case "cache-ctl":
-		handlerErr = handleCacheCtl(wf, query)
+	// 根据子命令路由到不同的处理器
+	switch {
+	// 缓存控制命令，例如 refresh:stars
+	case strings.HasPrefix(cmd, "refresh:"):
+		handleCacheCtl(cmd)
+	case cmd == "stars":
+		handleStars(query)
+	case cmd == "repos":
+		handleRepos(query)
+	case cmd == "gists":
+		handleGists(query)
+	case cmd == "search-repo":
+		handleSearchRepo(query)
 	default:
-		wf.NewItem(fmt.Sprintf("未知命令: %s", command)).Valid(false)
+		wf := NewWorkflow()
+		wf.NewItem(fmt.Sprintf("未知命令: %s", cmd)).SetValid(false)
+		wf.SendFeedback()
 	}
-
-	if handlerErr != nil {
-		wf.NewItem("执行出错").
-			Subtitle(handlerErr.Error()).
-			Valid(false)
-	}
-
-	wf.SendFeedback()
 }
+
