@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -13,6 +14,10 @@ var (
 	apiBase    = "https://api.github.com"
 	githubUser = os.Getenv("GITHUB_USER")
 	githubTok  = os.Getenv("GITHUB_TOKEN")
+
+	maxRepos = getenvInt("MAX_REPOS", 50)
+	maxStars = getenvInt("MAX_STARS", 50)
+	maxGists = getenvInt("MAX_GISTS", 50)
 )
 
 func githubFetch(url string) ([]byte, error) {
@@ -20,7 +25,7 @@ func githubFetch(url string) ([]byte, error) {
 	if githubTok != "" {
 		req.Header.Set("Authorization", "token "+githubTok)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -54,8 +59,41 @@ type Gist struct {
 	Files       map[string]interface{} `json:"files"`
 }
 
-// ---------- API ----------
+// ---------- 并发分页获取 ----------
+func fetchAll(url string, maxItems int, result interface{}) error {
+	perPage := 100
+	pages := (maxItems + perPage - 1) / perPage
+	var wg sync.WaitGroup
+	ch := make(chan []byte, pages)
 
+	for p := 1; p <= pages; p++ {
+		wg.Add(1)
+		go func(page int) {
+			defer wg.Done()
+			fullURL := fmt.Sprintf("%s?per_page=%d&page=%d", url, perPage, page)
+			data, err := githubFetch(fullURL)
+			if err == nil {
+				ch <- data
+			}
+		}(p)
+	}
+	wg.Wait()
+	close(ch)
+
+	var all []json.RawMessage
+	for data := range ch {
+		var arr []json.RawMessage
+		json.Unmarshal(data, &arr)
+		all = append(all, arr...)
+	}
+	if len(all) > maxItems {
+		all = all[:maxItems]
+	}
+	final, _ := json.Marshal(all)
+	return json.Unmarshal(final, result)
+}
+
+// ---------- API 封装 ----------
 func fetchStars() ([]Repo, error) {
 	var url string
 	if githubTok != "" {
@@ -63,12 +101,8 @@ func fetchStars() ([]Repo, error) {
 	} else {
 		url = fmt.Sprintf("%s/users/%s/starred", apiBase, githubUser)
 	}
-	data, err := githubFetch(url)
-	if err != nil {
-		return nil, err
-	}
 	var repos []Repo
-	err = json.Unmarshal(data, &repos)
+	err := fetchAll(url, maxStars, &repos)
 	return repos, err
 }
 
@@ -79,12 +113,8 @@ func fetchRepos() ([]Repo, error) {
 	} else {
 		url = fmt.Sprintf("%s/users/%s/repos", apiBase, githubUser)
 	}
-	data, err := githubFetch(url)
-	if err != nil {
-		return nil, err
-	}
 	var repos []Repo
-	err = json.Unmarshal(data, &repos)
+	err := fetchAll(url, maxRepos, &repos)
 	return repos, err
 }
 
@@ -95,11 +125,7 @@ func fetchGists() ([]Gist, error) {
 	} else {
 		url = fmt.Sprintf("%s/users/%s/gists", apiBase, githubUser)
 	}
-	data, err := githubFetch(url)
-	if err != nil {
-		return nil, err
-	}
 	var gists []Gist
-	err = json.Unmarshal(data, &gists)
+	err := fetchAll(url, maxGists, &gists)
 	return gists, err
 }
