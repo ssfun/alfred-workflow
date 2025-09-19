@@ -47,6 +47,8 @@ func main() {
 	} else {
 		// --- 子命令 ---
 		switch cmd {
+		case "searchrepo":
+            items = HandleSearchRepo(query)
 		case "stars":
 			items = HandleStars(query)
 		case "repos":
