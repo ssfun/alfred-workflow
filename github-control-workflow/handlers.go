@@ -206,47 +206,52 @@ func HandleClear(t string) string {
 
 func HandleRefresh(t string) []AlfredItem {
 	db := initDB()
-	msg := ""
-	ok := false
-
 	switch t {
-	case "repos":
-		if fresh, err := fetchRepos(); err == nil {
-			saveRepos(db, fresh, "repos")
-			msg, ok = "✅ Repos 缓存已刷新", true
-		} else {
-			msg = "⚠️ Repos 刷新失败: " + err.Error()
-		}
 	case "stars":
 		if fresh, err := fetchStars(); err == nil {
 			saveRepos(db, fresh, "stars")
-			msg, ok = "✅ Stars 缓存已刷新", true
+			triggerAlfred("stars.refresh")
+			return []AlfredItem{{
+				Title:    "♻ Stars 缓存已刷新",
+				Subtitle: cacheInfo(db, "stars"),
+				Valid:    false,
+				Variables: map[string]string{
+					"querysubtitle": cacheInfo(db, "stars"),
+				},
+			}}
 		} else {
-			msg = "⚠️ Stars 刷新失败: " + err.Error()
+			return []AlfredItem{{Title: "⚠️ Stars 刷新失败: " + err.Error(), Valid: false}}
+		}
+	case "repos":
+		if fresh, err := fetchRepos(); err == nil {
+			saveRepos(db, fresh, "repos")
+			triggerAlfred("repos.refresh")
+			return []AlfredItem{{
+				Title:    "♻ Repos 缓存已刷新",
+				Subtitle: cacheInfo(db, "repos"),
+				Valid:    false,
+				Variables: map[string]string{
+					"querysubtitle": cacheInfo(db, "repos"),
+				},
+			}}
+		} else {
+			return []AlfredItem{{Title: "⚠️ Repos 刷新失败: " + err.Error(), Valid: false}}
 		}
 	case "gists":
 		if fresh, err := fetchGists(); err == nil {
 			saveGists(db, fresh)
-			msg, ok = "✅ Gists 缓存已刷新", true
+			triggerAlfred("gists.refresh")
+			return []AlfredItem{{
+				Title:    "♻ Gists 缓存已刷新",
+				Subtitle: cacheInfo(db, "gists"),
+				Valid:    false,
+				Variables: map[string]string{
+					"querysubtitle": cacheInfo(db, "gists"),
+				},
+			}}
 		} else {
-			msg = "⚠️ Gists 刷新失败: " + err.Error()
+			return []AlfredItem{{Title: "⚠️ Gists 刷新失败: " + err.Error(), Valid: false}}
 		}
-	default:
-		return []AlfredItem{{
-			Title:    "未知类型: " + t,
-			Subtitle: "无法刷新",
-			Valid:    false,
-		}}
 	}
-
-	if ok {
-		return []AlfredItem{{
-			Title:    msg,
-			Subtitle: "数据已更新，正在重新加载...",
-			Valid:    false,
-			Arg:      "reload:" + t,
-		}}
-	} else {
-		return []AlfredItem{{Title: msg, Valid: false}}
-	}
+	return []AlfredItem{{Title: "未知类型: " + t, Valid: false}}
 }
