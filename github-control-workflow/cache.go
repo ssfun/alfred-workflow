@@ -11,8 +11,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+var globalDB *sql.DB
+var dbPath = getCachePath()
+
+// 计算缓存路径（支持 GITHUB_CACHE_DIR；默认 ~/Library/Caches/com.runningwithcrayons.Alfred/$BundleId）
 func getCachePath() string {
-	// 优先从环境获取
 	cacheDir := os.Getenv("GITHUB_CACHE_DIR")
 	if cacheDir == "" {
 		bundleID := os.Getenv("alfred_workflow_bundleid")
@@ -26,9 +29,10 @@ func getCachePath() string {
 	return filepath.Join(cacheDir, "github_cache.db")
 }
 
-var dbPath = getCachePath()
-
 func initDB() *sql.DB {
+	if globalDB != nil {
+		return globalDB
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		panic(err)
@@ -60,10 +64,11 @@ func initDB() *sql.DB {
 		key TEXT PRIMARY KEY,
 		value TEXT
 	);`)
+	globalDB = db
 	return db
 }
 
-// ------------ Repos/Gists 存取逻辑 ------------
+// 保存 Repos 并强制刷新 WAL → 主库
 func saveRepos(db *sql.DB, repos []Repo, repoType string) {
 	tx, _ := db.Begin()
 	tx.Exec("DELETE FROM repos WHERE type=?", repoType)
@@ -72,14 +77,56 @@ func saveRepos(db *sql.DB, repos []Repo, repoType string) {
 		tx.Exec(`INSERT OR REPLACE INTO repos 
 			(id,type,full_name,description,html_url,clone_url,stars,updated_at,private,normalized) 
 			VALUES (?,?,?,?,?,?,?,?,?,?)`,
-			r.ID, repoType, r.FullName, r.Description, r.HTMLURL, r.CloneURL, r.Stars, r.UpdatedAt,
-			boolToInt(r.Private), norm)
+			r.ID, repoType, r.FullName, r.Description, r.HTMLURL, r.CloneURL,
+			r.Stars, r.UpdatedAt, boolToInt(r.Private), norm)
 	}
 	tx.Commit()
 	setMeta(db, "last_"+repoType, time.Now().Format("2006-01-02 15:04"))
+	// ✅ 强制 WAL 写盘，让下一个查询立即可见
 	db.Exec("PRAGMA wal_checkpoint(FULL)")
 }
 
+// 保存 Gists 并强制刷新 WAL → 主库
+func saveGists(db *sql.DB, gists []Gist) {
+	tx, _ := db.Begin()
+	tx.Exec("DELETE FROM gists")
+	for _, g := range gists {
+		filesStr := []string{}
+		for fname := range g.Files {
+			filesStr = append(filesStr, fname)
+		}
+		norm := normalize(g.Description + " " + strings.Join(filesStr, " "))
+		tx.Exec(`INSERT OR REPLACE INTO gists 
+			(id,description,html_url,public,updated_at,files,normalized) 
+			VALUES (?,?,?,?,?,?,?)`,
+			g.ID, g.Description, g.HTMLURL, boolToInt(g.Public),
+			g.UpdatedAt, strings.Join(filesStr, ","), norm)
+	}
+	tx.Commit()
+	setMeta(db, "last_gists", time.Now().Format("2006-01-02 15:04"))
+	db.Exec("PRAGMA wal_checkpoint(FULL)")
+}
+
+// 查询缓存信息（数量 + 最近更新时间）
+func cacheInfo(db *sql.DB, t string) string {
+	count := 0
+	var last string
+	switch t {
+	case "stars":
+		db.QueryRow("SELECT COUNT(*) FROM repos WHERE type='stars'").Scan(&count)
+	case "repos":
+		db.QueryRow("SELECT COUNT(*) FROM repos WHERE type='repos'").Scan(&count)
+	case "gists":
+		db.QueryRow("SELECT COUNT(*) FROM gists").Scan(&count)
+	}
+	last = getMeta(db, "last_"+t)
+	if last == "" {
+		return "无缓存记录"
+	}
+	return fmt.Sprintf("%d 条 · 最近更新 %s", count, last)
+}
+
+// 查询 Repos
 func queryRepos(db *sql.DB, repoType, query string, limit int) []Repo {
 	q := "SELECT id,full_name,description,html_url,clone_url,stars,updated_at,private FROM repos WHERE type=?"
 	args := []interface{}{repoType}
@@ -89,6 +136,7 @@ func queryRepos(db *sql.DB, repoType, query string, limit int) []Repo {
 	}
 	q += " ORDER BY updated_at DESC LIMIT ?"
 	args = append(args, limit)
+
 	rows, _ := db.Query(q, args...)
 	defer rows.Close()
 
@@ -103,26 +151,7 @@ func queryRepos(db *sql.DB, repoType, query string, limit int) []Repo {
 	return res
 }
 
-func saveGists(db *sql.DB, gists []Gist) {
-	tx, _ := db.Begin()
-	tx.Exec("DELETE FROM gists")
-	for _, g := range gists {
-		filesStr := []string{}
-		for fname := range g.Files {
-			filesStr = append(filesStr, fname)
-		}
-		norm := normalize(g.Description + " " + strings.Join(filesStr, " "))
-		tx.Exec(`INSERT OR REPLACE INTO gists 
-			(id,description,html_url,public,updated_at,files,normalized) 
-			VALUES (?,?,?,?,?,?,?)`,
-			g.ID, g.Description, g.HTMLURL, boolToInt(g.Public), g.UpdatedAt,
-			strings.Join(filesStr, ","), norm)
-	}
-	tx.Commit()
-	setMeta(db, "last_gists", time.Now().Format("2006-01-02 15:04"))
-	db.Exec("PRAGMA wal_checkpoint(FULL)")
-}
-
+// 查询 Gists
 func queryGists(db *sql.DB, query string, limit int) []Gist {
 	q := "SELECT id,description,html_url,public,updated_at,files FROM gists WHERE 1=1"
 	args := []interface{}{}
@@ -132,6 +161,7 @@ func queryGists(db *sql.DB, query string, limit int) []Gist {
 	}
 	q += " ORDER BY updated_at DESC LIMIT ?"
 	args = append(args, limit)
+
 	rows, _ := db.Query(q, args...)
 	defer rows.Close()
 
@@ -153,7 +183,7 @@ func queryGists(db *sql.DB, query string, limit int) []Gist {
 	return res
 }
 
-// ------------ Meta & Utils ------------
+// Meta 工具
 func getMeta(db *sql.DB, key string) string {
 	var val string
 	db.QueryRow("SELECT value FROM meta WHERE key=?", key).Scan(&val)
@@ -168,25 +198,4 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-// 统计缓存条目 + 最近更新时间
-func cacheInfo(db *sql.DB, t string) string {
-    count := 0
-    last := ""
-
-    switch t {
-    case "stars":
-        db.QueryRow("SELECT COUNT(*) FROM repos WHERE type='stars'").Scan(&count)
-    case "repos":
-        db.QueryRow("SELECT COUNT(*) FROM repos WHERE type='repos'").Scan(&count)
-    case "gists":
-        db.QueryRow("SELECT COUNT(*) FROM gists").Scan(&count)
-    }
-
-    last = getMeta(db, "last_"+t)
-    if last == "" {
-        return fmt.Sprintf("无缓存记录")
-    }
-    return fmt.Sprintf("%d 条 · 最近更新 %s", count, last)
 }
