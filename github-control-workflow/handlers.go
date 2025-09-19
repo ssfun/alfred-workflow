@@ -13,7 +13,7 @@ func HandleStars(query string) []AlfredItem {
 	if query == "" {
 		items = append(items,
 			AlfredItem{
-				Title:    "🌐 打开 GitHub Stars 页面",
+				Title:    "✪ 打开 Stars 页面",
 				Subtitle: fmt.Sprintf("https://github.com/%s?tab=stars", githubUser),
 				Arg:      fmt.Sprintf("https://github.com/%s?tab=stars", githubUser),
 				Valid:    true,
@@ -40,7 +40,7 @@ func HandleStars(query string) []AlfredItem {
 		if r.Private {
 			title += " 🔒"
 		}
-		sub := fmt.Sprintf("⭐ %d · 更新时间 %s · %s", r.Stars, formatDate(r.UpdatedAt), r.Description)
+		sub := fmt.Sprintf("★ %d · 更新时间 %s · %s", r.Stars, formatDate(r.UpdatedAt), r.Description)
 		items = append(items, AlfredItem{
 			Title:    title,
 			Subtitle: sub,
@@ -54,7 +54,7 @@ func HandleStars(query string) []AlfredItem {
 		})
 	}
 	if len(items) == 0 {
-		items = append(items, AlfredItem{Title: "🚫 没有结果", Valid: false})
+		items = append(items, AlfredItem{Title: "✖ 没有结果", Valid: false})
 	}
 	return items
 }
@@ -67,7 +67,7 @@ func HandleRepos(query string) []AlfredItem {
 	if query == "" {
 		items = append(items,
 			AlfredItem{
-				Title:    "🌐 打开我的 GitHub Repos",
+				Title:    "✪ 打开 Repos 页面",
 				Subtitle: fmt.Sprintf("https://github.com/%s?tab=repositories", githubUser),
 				Arg:      fmt.Sprintf("https://github.com/%s?tab=repositories", githubUser),
 				Valid:    true,
@@ -94,7 +94,7 @@ func HandleRepos(query string) []AlfredItem {
 		if r.Private {
 			title += " 🔒"
 		}
-		sub := fmt.Sprintf("⭐ %d · 更新时间 %s · %s", r.Stars, formatDate(r.UpdatedAt), r.Description)
+		sub := fmt.Sprintf("★ %d · 更新时间 %s · %s", r.Stars, formatDate(r.UpdatedAt), r.Description)
 		items = append(items, AlfredItem{
 			Title:    title,
 			Subtitle: sub,
@@ -108,7 +108,7 @@ func HandleRepos(query string) []AlfredItem {
 		})
 	}
 	if len(items) == 0 {
-		items = append(items, AlfredItem{Title: "🚫 没有结果", Valid: false})
+		items = append(items, AlfredItem{Title: "✖ 没有结果", Valid: false})
 	}
 	return items
 }
@@ -121,7 +121,7 @@ func HandleGists(query string) []AlfredItem {
 	if query == "" {
 		items = append(items,
 			AlfredItem{
-				Title:    "🌐 打开我的 GitHub Gists",
+				Title:    "✪ 打开 Gists 页面",
 				Subtitle: fmt.Sprintf("https://gist.github.com/%s", githubUser),
 				Arg:      fmt.Sprintf("https://gist.github.com/%s", githubUser),
 				Valid:    true,
@@ -173,7 +173,7 @@ func HandleGists(query string) []AlfredItem {
 		})
 	}
 	if len(items) == 0 {
-		items = append(items, AlfredItem{Title: "🚫 没有结果", Valid: false})
+		items = append(items, AlfredItem{Title: "✖ 没有结果", Valid: false})
 	}
 	return items
 }
