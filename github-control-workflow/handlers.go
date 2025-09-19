@@ -1,264 +1,212 @@
+// handlers.go
 package main
 
 import (
+	"context"
 	"fmt"
-	"net/url"
-	"strings"
 	"time"
 
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v39/github"
 )
 
-func handleStars(wf *Workflow, query string) error {
+// handleStars 处理 'stars' 子命令
+func handleStars(query string) {
+	wf := NewWorkflow()
+
+	// 如果没有查询词，显示默认菜单项
 	if query == "" {
 		wf.NewItem("🌐 打开 GitHub Stars 页面").
-			Subtitle(fmt.Sprintf("https://github.com/%s?tab=stars", githubUser)).
-			Arg(fmt.Sprintf("https://github.com/%s?tab=stars", githubUser))
+			SetSubtitle(fmt.Sprintf("https://github.com/%s?tab=stars", githubUser)).
+			SetArg(fmt.Sprintf("https://github.com/%s?tab=stars", githubUser))
 		wf.NewItem("♻ 刷新 Stars 缓存").
-			Subtitle(getCacheInfo("stars")).
-			Arg("refresh:stars")
+			SetSubtitle(getCacheInfo("stars")).
+			SetArg("refresh:stars")
+		wf.SendFeedback()
+		return
 	}
 
-	repos, err := queryRepos("stars", query, maxRepos)
+	// 1. 从缓存查询
+	repos, err := queryRepos("stars", query, maxStars)
 	if err != nil {
-		return err
+		wf.NewItem("查询缓存失败").SetSubtitle(err.Error()).SetValid(false)
+		wf.SendFeedback()
+		return
 	}
 
-	// 如果缓存为空且没有搜索词，则从 API 获取
-	if len(repos) == 0 && query == "" {
-		client := newGitHubClient()
-		freshRepos, fetchErr := client.FetchStars()
+	// 2. 如果缓存为空，则从 API 获取
+	if len(repos) == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fresh, fetchErr := fetchStars(ctx)
 		if fetchErr != nil {
-			return fetchErr
+			wf.NewItem("从 GitHub API 获取失败").SetSubtitle(fetchErr.Error()).SetValid(false)
+			wf.SendFeedback()
+			return
 		}
-		if err := saveRepos("stars", freshRepos); err != nil {
-			return err
+		// 保存到缓存
+		if err := saveRepos(fresh, "stars"); err != nil {
+			wf.NewItem("保存缓存失败").SetSubtitle(err.Error()).SetValid(false)
 		}
-		repos = freshRepos
+		repos = fresh // 使用新获取的数据
 	}
 
+	// 3. 将结果转换为 Alfred Items
 	for _, r := range repos {
-		item := wf.NewItem(r.GetFullName()).
-			Subtitle(formatRepoSubtitle(r)).
-			Arg(r.GetHTMLURL()).
-			Match(makeMatchKeywords(r.GetFullName())).
-			UID(fmt.Sprintf("repo-%d", r.GetID())).
-			Cmd(r.GetCloneURL(), "复制 Clone URL").
-			Alt(r.GetHTMLURL(), "复制 Repo URL")
-		if r.GetPrivate() {
-			item.Title = fmt.Sprintf("%s 🔒", item.Title)
-		}
+		wf.NewItem(r.GetFullName()).
+			SetSubtitle(formatSubtitle(r.GetStargazersCount(), r.GetUpdatedAt().Time, r.GetDescription())).
+			SetArg(r.GetHTMLURL()).
+			SetMatch(normalize(r.GetFullName()+" "+r.GetDescription())).
+			SetCmdModifier(r.GetCloneURL(), "复制 Clone URL").
+			SetAltModifier(r.GetHTMLURL(), "复制 Repo URL")
 	}
-	return nil
+
+	if len(repos) == 0 {
+		wf.NewItem(fmt.Sprintf("✖ 未找到匹配: %s", query)).SetValid(false)
+	}
+
+	wf.SendFeedback()
 }
 
-func handleRepos(wf *Workflow, query string) error {
+// handleRepos 处理 'repos' 子命令
+func handleRepos(query string) {
+	wf := NewWorkflow()
+
 	if query == "" {
 		wf.NewItem("✪ 打开 Repos 页面").
-			Subtitle(fmt.Sprintf("https://github.com/%s?tab=repositories", githubUser)).
-			Arg(fmt.Sprintf("https://github.com/%s?tab=repositories", githubUser))
+			SetSubtitle(fmt.Sprintf("https://github.com/%s?tab=repositories", githubUser)).
+			SetArg(fmt.Sprintf("https://github.com/%s?tab=repositories", githubUser))
 		wf.NewItem("♻ 刷新 Repos 缓存").
-			Subtitle(getCacheInfo("repos")).
-			Arg("refresh:repos")
+			SetSubtitle(getCacheInfo("repos")).
+			SetArg("refresh:repos")
+		wf.SendFeedback()
+		return
 	}
 
 	repos, err := queryRepos("repos", query, maxRepos)
 	if err != nil {
-		return err
+		wf.NewItem("查询缓存失败").SetSubtitle(err.Error()).SetValid(false)
+		wf.SendFeedback()
+		return
 	}
 
-	if len(repos) == 0 && query == "" {
-		client := newGitHubClient()
-		freshRepos, fetchErr := client.FetchRepos()
+	if len(repos) == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fresh, fetchErr := fetchRepos(ctx)
 		if fetchErr != nil {
-			return fetchErr
+			wf.NewItem("从 GitHub API 获取失败").SetSubtitle(fetchErr.Error()).SetValid(false)
+			wf.SendFeedback()
+			return
 		}
-		if err := saveRepos("repos", freshRepos); err != nil {
-			return err
+		if err := saveRepos(fresh, "repos"); err != nil {
+			wf.NewItem("保存缓存失败").SetSubtitle(err.Error()).SetValid(false)
 		}
-		repos = freshRepos
+		repos = fresh
 	}
 
 	for _, r := range repos {
-		item := wf.NewItem(r.GetFullName()).
-			Subtitle(formatRepoSubtitle(r)).
-			Arg(r.GetHTMLURL()).
-			Match(makeMatchKeywords(r.GetFullName())).
-			UID(fmt.Sprintf("repo-%d", r.GetID())).
-			Cmd(r.GetCloneURL(), "复制 Clone URL").
-			Alt(r.GetHTMLURL(), "复制 Repo URL")
+		title := r.GetFullName()
 		if r.GetPrivate() {
-			item.Title = fmt.Sprintf("%s 🔒", item.Title)
+			title += " 🔒"
 		}
+		wf.NewItem(title).
+			SetSubtitle(formatSubtitle(r.GetStargazersCount(), r.GetUpdatedAt().Time, r.GetDescription())).
+			SetArg(r.GetHTMLURL()).
+			SetMatch(normalize(r.GetFullName()+" "+r.GetDescription())).
+			SetCmdModifier(r.GetCloneURL(), "复制 Clone URL").
+			SetAltModifier(r.GetHTMLURL(), "复制 Repo URL")
 	}
-	return nil
+
+	if len(repos) == 0 {
+		wf.NewItem(fmt.Sprintf("✖ 未找到匹配: %s", query)).SetValid(false)
+	}
+
+	wf.SendFeedback()
 }
 
-func handleGists(wf *Workflow, query string) error {
+// handleGists 处理 'gists' 子命令
+func handleGists(query string) {
+	wf := NewWorkflow()
+
 	if query == "" {
 		wf.NewItem("✪ 打开 Gists 页面").
-			Subtitle(fmt.Sprintf("https://gist.github.com/%s", githubUser)).
-			Arg(fmt.Sprintf("https://gist.github.com/%s", githubUser))
+			SetSubtitle(fmt.Sprintf("https://gist.github.com/%s", githubUser)).
+			SetArg(fmt.Sprintf("https://gist.github.com/%s", githubUser))
 		wf.NewItem("♻ 刷新 Gists 缓存").
-			Subtitle(getCacheInfo("gists")).
-			Arg("refresh:gists")
+			SetSubtitle(getCacheInfo("gists")).
+			SetArg("refresh:gists")
+		wf.SendFeedback()
+		return
 	}
 
 	gists, err := queryGists(query, maxGists)
 	if err != nil {
-		return err
+		wf.NewItem("查询 Gist 缓存失败").SetSubtitle(err.Error()).SetValid(false)
+		wf.SendFeedback()
+		return
 	}
 
-	if len(gists) == 0 && query == "" {
-		client := newGitHubClient()
-		freshGists, fetchErr := client.FetchGists()
+	if len(gists) == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fresh, fetchErr := fetchGists(ctx)
 		if fetchErr != nil {
-			return fetchErr
+			wf.NewItem("获取 Gists 失败").SetSubtitle(fetchErr.Error()).SetValid(false)
+			wf.SendFeedback()
+			return
 		}
-		if err := saveGists(freshGists); err != nil {
-			return err
+		if err := saveGists(fresh); err != nil {
+			wf.NewItem("保存 Gist 缓存失败").SetSubtitle(err.Error()).SetValid(false)
 		}
-		gists = freshGists
+		gists = fresh
 	}
 
 	for _, g := range gists {
 		title := g.GetDescription()
 		if title == "" {
-			title = "(无描述)"
+			title = "无描述的 Gist"
 		}
-
-		item := wf.NewItem(title).
-			Subtitle(formatGistSubtitle(g)).
-			Arg(g.GetHTMLURL()).
-			UID(g.GetID()).
-			Cmd(g.GetID(), "复制 Gist ID").
-			Alt(g.GetHTMLURL(), "复制 Gist URL")
 		if !g.GetPublic() {
-			item.Title = fmt.Sprintf("%s 🔒", item.Title)
+			title += " 🔒"
 		}
+
+		var filenames []string
+		for filename := range g.Files {
+			filenames = append(filenames, string(filename))
+		}
+
+		subtitle := fmt.Sprintf("%d 个文件: %s | 更新于 %s", len(filenames), time.Time(g.GetUpdatedAt()).Format("2006-01-02"))
+
+		wf.NewItem(title).
+			SetSubtitle(subtitle).
+			SetArg(g.GetHTMLURL()).
+			SetCmdModifier(g.GetID(), "复制 Gist ID").
+			SetAltModifier(g.GetHTMLURL(), "复制 Gist URL")
 	}
-	return nil
+
+	if len(gists) == 0 {
+		wf.NewItem(fmt.Sprintf("✖ 未找到匹配 Gist: %s", query)).SetValid(false)
+	}
+
+	wf.SendFeedback()
 }
 
-func handleSearchRepos(wf *Workflow, query string) error {
-	if query == "" {
-		wf.NewItem("请输入关键词进行搜索").Valid(false)
-		return nil
-	}
-
-	searchURL := fmt.Sprintf("https://github.com/search?q=%s&type=repositories", url.QueryEscape(query))
-	wf.NewItem("✪ 在 GitHub 打开搜索结果").
-		Subtitle(searchURL).
-		Arg(searchURL)
-
-	client := newGitHubClient()
-	repos, err := client.SearchRepos(query)
-	if err != nil {
-		return err
-	}
-
-	for _, r := range repos {
-		item := wf.NewItem(r.GetFullName()).
-			Subtitle(formatRepoSubtitle(r)).
-			Arg(r.GetHTMLURL()).
-			Match(makeMatchKeywords(r.GetFullName())).
-			UID(fmt.Sprintf("repo-%d", r.GetID())).
-			Cmd(r.GetCloneURL(), "复制 Clone URL").
-			Alt(r.GetHTMLURL(), "复制 Repo URL")
-		if r.GetPrivate() {
-			item.Title = fmt.Sprintf("%s 🔒", item.Title)
-		}
-	}
-	return nil
-}
-
-
-func handleCacheCtl(wf *Workflow, query string) error {
-	parts := strings.SplitN(query, ":", 2)
+// handleCacheCtl 处理缓存控制命令，如 'refresh:stars'
+func handleCacheCtl(arg string) {
+	wf := NewWorkflow()
+	parts := strings.Split(arg, ":")
 	if len(parts) != 2 {
-		return fmt.Errorf("无效的缓存控制命令: %s", query)
+		return // 无效参数，不做任何事
 	}
-	action, key := parts[0], parts[1]
+	action, cacheType := parts[0], parts[1]
 
-	switch action {
-	case "clear":
-		switch key {
-		case "stars":
-			clearRepos("stars")
-			wf.NewItem("Stars 缓存已清除")
-		case "repos":
-			clearRepos("repos")
-			wf.NewItem("Repos 缓存已清除")
-		case "gists":
-			clearGists()
-			wf.NewItem("Gists 缓存已清除")
-		case "all":
-			clearRepos("stars")
-			clearRepos("repos")
-			clearGists()
-			wf.NewItem("所有缓存已清除")
-		default:
-			return fmt.Errorf("无效的清除目标: %s", key)
+	if action == "refresh" {
+		if err := clearCache(cacheType); err != nil {
+			wf.NewItem(fmt.Sprintf("清除 %s 缓存失败", cacheType)).SetSubtitle(err.Error()).SetValid(false)
+			wf.SendFeedback()
+			return
 		}
-	case "refresh":
-		// 在 Go 中直接刷新，不再需要调用外部 AppleScript
-		client := newGitHubClient()
-		switch key {
-		case "stars":
-			wf.NewItem("正在刷新 Stars...").Valid(false)
-			clearRepos("stars")
-			stars, err := client.FetchStars()
-			if err != nil { return err }
-			saveRepos("stars", stars)
-			wf.NewItem("Stars 缓存已刷新")
-		case "repos":
-			wf.NewItem("正在刷新 Repos...").Valid(false)
-			clearRepos("repos")
-			repos, err := client.FetchRepos()
-			if err != nil { return err }
-			saveRepos("repos", repos)
-			wf.NewItem("Repos 缓存已刷新")
-		case "gists":
-			wf.NewItem("正在刷新 Gists...").Valid(false)
-			clearGists()
-			gists, err := client.FetchGists()
-			if err != nil { return err }
-			saveGists(gists)
-			wf.NewItem("Gists 缓存已刷新")
-		default:
-			return fmt.Errorf("无效的刷新目标: %s", key)
-		}
-	default:
-		return fmt.Errorf("无效的操作: %s", action)
+		// 这里可以通过 osascript 触发 Alfred 的外部刷新，但为了简化，我们仅提示用户
+		fmt.Printf("缓存 '%s' 已清空，请重新运行命令以刷新。", cacheType)
 	}
-
-	return nil
-}
-
-// --- Subtitle Formatters ---
-
-func formatRepoSubtitle(r *github.Repository) string {
-	return fmt.Sprintf("★ %d · 更新于 %s · %s",
-		r.GetStargazersCount(),
-		r.GetUpdatedAt().Format("2006-01-02"),
-		r.GetDescription(),
-	)
-}
-
-func formatGistSubtitle(g *github.Gist) string {
-	var fileNames []string
-	for fn := range g.Files {
-		fileNames = append(fileNames, string(fn))
-	}
-
-	filesPreview := strings.Join(fileNames[:min(len(fileNames), 3)], ", ")
-	if len(fileNames) > 3 {
-		filesPreview += "..."
-	}
-
-	return fmt.Sprintf("%d 个文件: %s | 更新于 %s",
-		len(fileNames),
-		filesPreview,
-		g.GetUpdatedAt().Format("2006-01-02"),
-	)
 }
