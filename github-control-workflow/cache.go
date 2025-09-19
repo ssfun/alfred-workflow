@@ -167,3 +167,24 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// 统计缓存条目 + 最近更新时间
+func cacheInfo(db *sql.DB, t string) string {
+    count := 0
+    last := ""
+
+    switch t {
+    case "stars":
+        db.QueryRow("SELECT COUNT(*) FROM repos WHERE type='stars'").Scan(&count)
+    case "repos":
+        db.QueryRow("SELECT COUNT(*) FROM repos WHERE type='repos'").Scan(&count)
+    case "gists":
+        db.QueryRow("SELECT COUNT(*) FROM gists").Scan(&count)
+    }
+
+    last = getMeta(db, "last_"+t)
+    if last == "" {
+        return fmt.Sprintf("无缓存记录")
+    }
+    return fmt.Sprintf("%d 条 · 最近更新 %s", count, last)
+}
