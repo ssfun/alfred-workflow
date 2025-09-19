@@ -17,26 +17,26 @@ func HandleClearCache() {
 		Valid:    true,
 	})
 
-	// Stars
+	// Stars 缓存
 	items = append(items, AlfredItem{
 		Title:    "🧹 清除 Stars 缓存",
-		Subtitle: cacheInfo(db, "repos", "stars"),
+		Subtitle: cacheInfo(db, "stars"),
 		Arg:      "clear:stars",
 		Valid:    true,
 	})
 
-	// Repos
+	// MyRepos 缓存
 	items = append(items, AlfredItem{
 		Title:    "🧹 清除 Repos 缓存",
-		Subtitle: cacheInfo(db, "repos", "repos"),
+		Subtitle: cacheInfo(db, "repos"),
 		Arg:      "clear:repos",
 		Valid:    true,
 	})
 
-	// Gists
+	// MyGists 缓存
 	items = append(items, AlfredItem{
 		Title:    "🧹 清除 Gists 缓存",
-		Subtitle: cacheInfo(db, "gists", "gists"),
+		Subtitle: cacheInfo(db, "gists"),
 		Arg:      "clear:gists",
 		Valid:    true,
 	})
