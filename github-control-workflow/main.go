@@ -1,7 +1,7 @@
-// main.go
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -9,39 +9,58 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		wf := NewWorkflow()
-		wf.NewItem("无效命令").
-			SetSubtitle("请提供一个子命令, 例如: stars, repos, gists, search-repo").
-			SetValid(false)
-		wf.SendFeedback()
+		fmt.Println(`{"items":[]}`)
 		return
 	}
 
-	// 解析命令行参数
-	// os.Args[0] 是程序名, os.Args[1] 是子命令
 	cmd := os.Args[1]
 	query := ""
 	if len(os.Args) > 2 {
 		query = os.Args[2]
 	}
 
-	// 根据子命令路由到不同的处理器
-	switch {
-	// 缓存控制命令，例如 refresh:stars
-	case strings.HasPrefix(cmd, "refresh:"):
-		handleCacheCtl(cmd)
-	case cmd == "stars":
-		handleStars(query)
-	case cmd == "repos":
-		handleRepos(query)
-	case cmd == "gists":
-		handleGists(query)
-	case cmd == "search-repo":
-		handleSearchRepo(query)
-	default:
-		wf := NewWorkflow()
-		wf.NewItem(fmt.Sprintf("未知命令: %s", cmd)).SetValid(false)
-		wf.SendFeedback()
-	}
-}
+	var items []AlfredItem
 
+	// --- 特殊命令 Clear & Refresh & Reload ---
+	if strings.HasPrefix(cmd, "clear:") {
+		t := strings.TrimPrefix(cmd, "clear:")
+		msg := HandleClear(t)
+		items = []AlfredItem{{Title: msg, Valid: false}}
+
+	} else if strings.HasPrefix(cmd, "refresh:") {
+		t := strings.TrimPrefix(cmd, "refresh:")
+		items = HandleRefresh(t)
+
+	} else if strings.HasPrefix(cmd, "reload:") {
+		t := strings.TrimPrefix(cmd, "reload:")
+		switch t {
+		case "repos":
+			items = HandleRepos("")
+		case "stars":
+			items = HandleStars("")
+		case "gists":
+			items = HandleGists("")
+		}
+
+	} else {
+		// --- 子命令 ---
+		switch cmd {
+		case "stars":
+			items = HandleStars(query)
+		case "repos":
+			items = HandleRepos(query)
+		case "gists":
+			items = HandleGists(query)
+		default:
+			items = []AlfredItem{{
+				Title:    "未知命令",
+				Subtitle: cmd,
+				Valid:    false,
+			}}
+		}
+	}
+
+	out := map[string]interface{}{"items": items}
+	enc := json.NewEncoder(os.Stdout)
+	enc.Encode(out)
+}
