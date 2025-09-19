@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest   # 使用 macOS runner (默认是 x86_64, 交叉编译 arm64)
+    runs-on: macos-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -19,6 +19,14 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
+
+      - name: Init go module if missing
+        working-directory: ./github-control-workflow
+        run: |
+          if [ ! -f go.mod ]; then
+            go mod init github.com/${{ github.repository }}/github-control-workflow
+          fi
+          go mod tidy
 
       - name: Build binary for Apple Silicon
         working-directory: ./github-control-workflow
