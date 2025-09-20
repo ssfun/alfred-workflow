@@ -42,6 +42,9 @@ func HandleCacheCtl(action string) []AlfredItem {
 				Title:    fmt.Sprintf("🧹 已清除 %s 缓存", key),
 				Subtitle: cacheInfo(db, key),
 				Valid:    false,
+				Variables: map[string]string{
+						"querysubtitle": info,
+					},
 			}}
 		case "all":
 			HandleClear("all")
@@ -50,6 +53,9 @@ func HandleCacheCtl(action string) []AlfredItem {
 				Subtitle: fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s",
 					cacheInfo(db, "stars"), cacheInfo(db, "repos"), cacheInfo(db, "gists")),
 				Valid: false,
+				Variables: map[string]string{
+						"querysubtitle": info,
+					},
 			}}
 		default:
 			return []AlfredItem{{Title: "未知类型: " + key, Valid: false}}
