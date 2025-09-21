@@ -64,8 +64,18 @@ func main() {
                 return
             }
             query := os.Args[2]
-            HandleCacheCtl(query)
-            return
+
+            if strings.HasPrefix(query, "open:") {
+                path := strings.TrimPrefix(query, "open:")
+                if err := openPath(path); err != nil {
+                    fmt.Printf("打开目录失败: %v\n", err)
+                } else {
+                    fmt.Printf("已在 Finder 打开目录: %s\n", path)
+                }
+                return
+            }
+    HandleCacheCtl(query)
+    return
 		default:
 			items = []AlfredItem{{
 				Title:    "未知命令",
