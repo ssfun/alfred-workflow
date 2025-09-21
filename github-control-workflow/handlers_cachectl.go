@@ -48,7 +48,7 @@ func HandleCacheCtl(action string) {
 		case "stars", "repos", "gists":
 			HandleClear(key)
 			info := cacheInfo(db, key)
-			fmt.Printf("querysubtitle=🧹 已清除 %s 缓存 · %s\n", key, info)
+			fmt.Printf("已清除 %s 缓存 · %s\n", key, info)
 			return
 		case "all":
 			HandleClear("all")
@@ -56,7 +56,7 @@ func HandleCacheCtl(action string) {
 			infoRepos := cacheInfo(db, "repos")
 			infoGists := cacheInfo(db, "gists")
 			summary := fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s", infoStars, infoRepos, infoGists)
-			fmt.Printf("querysubtitle=🧹 已清除所有缓存 · %s\n", summary)
+			fmt.Printf("已清除所有缓存 · %s\n", summary)
 			return
 		default:
 			fmt.Printf("querysubtitle=未知类型: %s\n", key)
