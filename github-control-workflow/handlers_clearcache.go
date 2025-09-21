@@ -25,7 +25,7 @@ func HandleClearCache() {
 		Valid:    true,
 	})
 
-	// MyRepos 缓存
+	// Repos 缓存
 	items = append(items, AlfredItem{
 		Title:    "清除 Repos 缓存",
 		Subtitle: cacheInfo(db, "repos"),
@@ -33,7 +33,7 @@ func HandleClearCache() {
 		Valid:    true,
 	})
 
-	// MyGists 缓存
+	// Gists 缓存
 	items = append(items, AlfredItem{
 		Title:    "清除 Gists 缓存",
 		Subtitle: cacheInfo(db, "gists"),
@@ -41,6 +41,19 @@ func HandleClearCache() {
 		Valid:    true,
 	})
 
+	// ⚡ 新增：打开缓存目录
+	cacheDir := os.Getenv("CACHE_DIR")
+	if cacheDir == "" {
+		cacheDir = os.TempDir()
+	}
+	items = append(items, AlfredItem{
+		Title:    "打开缓存目录",
+		Subtitle: cacheDir,
+		Arg:      cacheDir,
+		Valid:    true,
+	})
+
+	// 输出 JSON
 	out := map[string]interface{}{"items": items}
 	enc := json.NewEncoder(os.Stdout)
 	enc.Encode(out)
