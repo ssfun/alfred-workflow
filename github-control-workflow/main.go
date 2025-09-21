@@ -59,7 +59,13 @@ func main() {
             HandleClearCache()
             return
         case "cachectl":
-            items = HandleCacheCtl(query)
+            if len(os.Args) < 3 {
+                fmt.Println("querysubtitle=用法: cachectl [clear|refresh]:[stars|repos|gists|all]")
+                return
+            }
+            query := os.Args[2]
+            HandleCacheCtl(query)
+            return
 		default:
 			items = []AlfredItem{{
 				Title:    "未知命令",
