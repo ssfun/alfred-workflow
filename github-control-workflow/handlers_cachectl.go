@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,13 +17,19 @@ func triggerAlfred(triggerID string) {
 	exec.Command("osascript", "-e", script).Run()
 }
 
-// cachectl: clear:xxx 或 refresh:xxx
-func HandleCacheCtl(action string) []AlfredItem {
+// 输出 Alfred Script Filter JSON
+func writeAlfredItems(items []AlfredItem) {
+	out := map[string]interface{}{"items": items}
+	enc := json.NewEncoder(os.Stdout)
+	enc.Encode(out)
+}
+
+// HandleCacheCtl 根据 clear/refresh 自动选择输出模式
+func HandleCacheCtl(action string) {
 	if action == "" {
-		return []AlfredItem{{
-			Title: "用法: cachectl [clear|refresh]:[stars|repos|gists|all]",
-			Valid: false,
-		}}
+		// clear 模式：直接输出环境变量
+		fmt.Println("querysubtitle=用法: cachectl [clear|refresh]:[stars|repos|gists|all]")
+		return
 	}
 
 	var act, key string
@@ -35,37 +42,28 @@ func HandleCacheCtl(action string) []AlfredItem {
 	db := initDB()
 
 	switch act {
-	// ----------------- CLEAR -----------------
+	// ---------- CLEAR (Run Script → 输出变量格式) ----------
 	case "clear":
 		switch key {
 		case "stars", "repos", "gists":
 			HandleClear(key)
 			info := cacheInfo(db, key)
-			return []AlfredItem{{
-				Title:    fmt.Sprintf("🧹 已清除 %s 缓存", key),
-				Subtitle: info,
-				Valid:    false,
-				Variables: map[string]string{
-					"querysubtitle": info,
-				},
-			}}
+			fmt.Printf("querysubtitle=🧹 已清除 %s 缓存 · %s\n", key, info)
+			return
 		case "all":
 			HandleClear("all")
 			infoStars := cacheInfo(db, "stars")
 			infoRepos := cacheInfo(db, "repos")
 			infoGists := cacheInfo(db, "gists")
 			summary := fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s", infoStars, infoRepos, infoGists)
-			return []AlfredItem{{
-				Title:    "🧹 已清除所有缓存",
-				Subtitle: summary,
-				Valid:    false,
-				Variables: map[string]string{
-					"querysubtitle": summary,
-				},
-			}}
+			fmt.Printf("querysubtitle=🧹 已清除所有缓存 · %s\n", summary)
+			return
+		default:
+			fmt.Printf("querysubtitle=未知类型: %s\n", key)
+			return
 		}
 
-	// ----------------- REFRESH -----------------
+	// ---------- REFRESH (Script Filter → JSON) ----------
 	case "refresh":
 		switch key {
 		case "stars":
@@ -73,63 +71,47 @@ func HandleCacheCtl(action string) []AlfredItem {
 				saveRepos(db, fresh, "stars")
 				triggerAlfred("stars.refresh")
 				info := cacheInfo(db, "stars")
-				return []AlfredItem{{
+				writeAlfredItems([]AlfredItem{{
 					Title:    "♻ Stars 缓存已刷新",
 					Subtitle: info,
 					Valid:    false,
 					Variables: map[string]string{
 						"querysubtitle": info,
 					},
-				}}
-			} else {
-				return []AlfredItem{{
-					Title: "⚠️ Stars 刷新失败: " + err.Error(),
-					Valid: false,
-				}}
+				}})
+				return
 			}
-
 		case "repos":
 			if fresh, err := fetchRepos(); err == nil {
 				saveRepos(db, fresh, "repos")
 				triggerAlfred("repos.refresh")
 				info := cacheInfo(db, "repos")
-				return []AlfredItem{{
+				writeAlfredItems([]AlfredItem{{
 					Title:    "♻ Repos 缓存已刷新",
 					Subtitle: info,
 					Valid:    false,
 					Variables: map[string]string{
 						"querysubtitle": info,
 					},
-				}}
-			} else {
-				return []AlfredItem{{
-					Title: "⚠️ Repos 刷新失败: " + err.Error(),
-					Valid: false,
-				}}
+				}})
+				return
 			}
-
 		case "gists":
 			if fresh, err := fetchGists(); err == nil {
 				saveGists(db, fresh)
 				triggerAlfred("gists.refresh")
 				info := cacheInfo(db, "gists")
-				return []AlfredItem{{
+				writeAlfredItems([]AlfredItem{{
 					Title:    "♻ Gists 缓存已刷新",
 					Subtitle: info,
 					Valid:    false,
 					Variables: map[string]string{
 						"querysubtitle": info,
 					},
-				}}
-			} else {
-				return []AlfredItem{{
-					Title: "⚠️ Gists 刷新失败: " + err.Error(),
-					Valid: false,
-				}}
+				}})
+				return
 			}
-
 		case "all":
-			// all 要分别刷新三类
 			if stars, err := fetchStars(); err == nil {
 				saveRepos(db, stars, "stars")
 				triggerAlfred("stars.refresh")
@@ -146,24 +128,23 @@ func HandleCacheCtl(action string) []AlfredItem {
 			infoRepos := cacheInfo(db, "repos")
 			infoGists := cacheInfo(db, "gists")
 			summary := fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s", infoStars, infoRepos, infoGists)
-			return []AlfredItem{{
+			writeAlfredItems([]AlfredItem{{
 				Title:    "♻ 所有缓存已刷新",
 				Subtitle: summary,
 				Valid:    false,
 				Variables: map[string]string{
 					"querysubtitle": summary,
 				},
-			}}
+			}})
+			return
 		}
 	}
 
-	return []AlfredItem{{
-		Title: "未知命令: " + action,
-		Valid: false,
-	}}
+	// ---------- Unknown ----------
+	fmt.Println("querysubtitle=未知命令: " + action)
 }
 
-// 小工具：找冒号
+// util：找冒号
 func indexColon(s string) int {
 	for i, c := range s {
 		if c == ':' {
