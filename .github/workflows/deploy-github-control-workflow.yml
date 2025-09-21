@@ -25,6 +25,14 @@ jobs:
       - name: Install UPX
         run: brew install upx
 
+      - name: Setup Go Module
+        working-directory: ./github-control-workflow
+        run: |
+          if [ ! -f go.mod ]; then
+            go mod init github-control-workflow
+          fi
+          go mod tidy
+    
       - name: Build arm64 binary
         working-directory: ./github-control-workflow
         run: |
