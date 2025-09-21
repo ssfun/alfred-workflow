@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -15,7 +16,7 @@ var globalDB *sql.DB
 var dbPath = getCachePath()
 
 // 计算缓存路径（支持 GITHUB_CACHE_DIR；默认 ~/Library/Caches/com.runningwithcrayons.Alfred/$BundleId）
-func getCachePath() string {
+func getCacheDir() string {
 	cacheDir := os.Getenv("GITHUB_CACHE_DIR")
 	if cacheDir == "" {
 		bundleID := os.Getenv("alfred_workflow_bundleid")
@@ -26,7 +27,11 @@ func getCachePath() string {
 			"Library", "Caches", "com.runningwithcrayons.Alfred", bundleID)
 	}
 	os.MkdirAll(cacheDir, 0755)
-	return filepath.Join(cacheDir, "github_cache.db")
+	return cacheDir
+}
+
+func getCachePath() string {
+	return filepath.Join(getCacheDir(), "github_cache.db")
 }
 
 func initDB() *sql.DB {
