@@ -41,15 +41,12 @@ func HandleClearCache() {
 		Valid:    true,
 	})
 
-	// ⚡ 新增：打开缓存目录
-	cacheDir := os.Getenv("CACHE_DIR")
-	if cacheDir == "" {
-		cacheDir = os.TempDir()
-	}
+	// 📂 打开缓存目录
+	cacheDir := getCacheDir()
 	items = append(items, AlfredItem{
 		Title:    "打开缓存目录",
 		Subtitle: cacheDir,
-		Arg:      cacheDir,
+		Arg:      "open:"+cacheDir,  // 用 open: 前缀标记
 		Valid:    true,
 	})
 
