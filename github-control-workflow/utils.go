@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"os/exec"
 )
 
 func normalize(s string) string {
@@ -27,4 +28,9 @@ func getenvInt(k string, def int) int {
 		return n
 	}
 	return def
+}
+
+func openPath(path string) error {
+	cmd := exec.Command("open", path)
+	return cmd.Run()
 }
