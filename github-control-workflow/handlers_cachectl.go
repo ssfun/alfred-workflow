@@ -6,6 +6,7 @@ import (
 	"os/exec"
 )
 
+// 触发 Alfred External Trigger
 func triggerAlfred(triggerID string) {
 	bundleID := os.Getenv("alfred_workflow_bundleid")
 	if bundleID == "" {
@@ -15,7 +16,7 @@ func triggerAlfred(triggerID string) {
 	exec.Command("osascript", "-e", script).Run()
 }
 
-// HandleCacheCtl 动作：clear:xxx 或 refresh:xxx
+// cachectl: clear:xxx 或 refresh:xxx
 func HandleCacheCtl(action string) []AlfredItem {
 	if action == "" {
 		return []AlfredItem{{
@@ -34,80 +35,135 @@ func HandleCacheCtl(action string) []AlfredItem {
 	db := initDB()
 
 	switch act {
+	// ----------------- CLEAR -----------------
 	case "clear":
 		switch key {
 		case "stars", "repos", "gists":
 			HandleClear(key)
-			info := cacheInfo(db, "key")
+			info := cacheInfo(db, key)
 			return []AlfredItem{{
 				Title:    fmt.Sprintf("🧹 已清除 %s 缓存", key),
 				Subtitle: info,
 				Valid:    false,
 				Variables: map[string]string{
-						"querysubtitle": info,
-					},
+					"querysubtitle": info,
+				},
 			}}
 		case "all":
 			HandleClear("all")
-			info := fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s",
-					cacheInfo(db, "stars"), cacheInfo(db, "repos"), cacheInfo(db, "gists"))
+			infoStars := cacheInfo(db, "stars")
+			infoRepos := cacheInfo(db, "repos")
+			infoGists := cacheInfo(db, "gists")
+			summary := fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s", infoStars, infoRepos, infoGists)
 			return []AlfredItem{{
 				Title:    "🧹 已清除所有缓存",
-				Subtitle: info,
-				Valid: false,
+				Subtitle: summary,
+				Valid:    false,
 				Variables: map[string]string{
-						"querysubtitle": info,
-					},
+					"querysubtitle": summary,
+				},
 			}}
-		default:
-			return []AlfredItem{{Title: "未知类型: " + key, Valid: false}}
 		}
 
+	// ----------------- REFRESH -----------------
 	case "refresh":
 		switch key {
 		case "stars":
-			HandleClear("stars")
-			triggerAlfred("stars.refresh")
-			return []AlfredItem{{
-				Title:    "♻ 刷新 Stars 缓存",
-				Subtitle: cacheInfo(db, "stars"),
-				Valid:    false,
-			}}
-		case "repos":
-			HandleClear("repos")
-			triggerAlfred("repos.refresh")
-			return []AlfredItem{{
-				Title:    "♻ 刷新 Repos 缓存",
-				Subtitle: cacheInfo(db, "repos"),
-				Valid:    false,
-			}}
-		case "gists":
-			HandleClear("gists")
-			triggerAlfred("gists.refresh")
-			return []AlfredItem{{
-				Title:    "♻ 刷新 Gists 缓存",
-				Subtitle: cacheInfo(db, "gists"),
-				Valid:    false,
-			}}
-		case "all":
-			HandleClear("all")
-			for _, trig := range []string{"stars.refresh", "repos.refresh", "gists.refresh"} {
-				triggerAlfred(trig)
+			if fresh, err := fetchStars(); err == nil {
+				saveRepos(db, fresh, "stars")
+				triggerAlfred("stars.refresh")
+				info := cacheInfo(db, "stars")
+				return []AlfredItem{{
+					Title:    "♻ Stars 缓存已刷新",
+					Subtitle: info,
+					Valid:    false,
+					Variables: map[string]string{
+						"querysubtitle": info,
+					},
+				}}
+			} else {
+				return []AlfredItem{{
+					Title: "⚠️ Stars 刷新失败: " + err.Error(),
+					Valid: false,
+				}}
 			}
+
+		case "repos":
+			if fresh, err := fetchRepos(); err == nil {
+				saveRepos(db, fresh, "repos")
+				triggerAlfred("repos.refresh")
+				info := cacheInfo(db, "repos")
+				return []AlfredItem{{
+					Title:    "♻ Repos 缓存已刷新",
+					Subtitle: info,
+					Valid:    false,
+					Variables: map[string]string{
+						"querysubtitle": info,
+					},
+				}}
+			} else {
+				return []AlfredItem{{
+					Title: "⚠️ Repos 刷新失败: " + err.Error(),
+					Valid: false,
+				}}
+			}
+
+		case "gists":
+			if fresh, err := fetchGists(); err == nil {
+				saveGists(db, fresh)
+				triggerAlfred("gists.refresh")
+				info := cacheInfo(db, "gists")
+				return []AlfredItem{{
+					Title:    "♻ Gists 缓存已刷新",
+					Subtitle: info,
+					Valid:    false,
+					Variables: map[string]string{
+						"querysubtitle": info,
+					},
+				}}
+			} else {
+				return []AlfredItem{{
+					Title: "⚠️ Gists 刷新失败: " + err.Error(),
+					Valid: false,
+				}}
+			}
+
+		case "all":
+			// all 要分别刷新三类
+			if stars, err := fetchStars(); err == nil {
+				saveRepos(db, stars, "stars")
+				triggerAlfred("stars.refresh")
+			}
+			if repos, err := fetchRepos(); err == nil {
+				saveRepos(db, repos, "repos")
+				triggerAlfred("repos.refresh")
+			}
+			if gists, err := fetchGists(); err == nil {
+				saveGists(db, gists)
+				triggerAlfred("gists.refresh")
+			}
+			infoStars := cacheInfo(db, "stars")
+			infoRepos := cacheInfo(db, "repos")
+			infoGists := cacheInfo(db, "gists")
+			summary := fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s", infoStars, infoRepos, infoGists)
 			return []AlfredItem{{
-				Title:    "♻ 刷新所有缓存",
-				Subtitle: fmt.Sprintf("Stars=%s | Repos=%s | Gists=%s",
-					cacheInfo(db, "stars"), cacheInfo(db, "repos"), cacheInfo(db, "gists")),
-				Valid: false,
+				Title:    "♻ 所有缓存已刷新",
+				Subtitle: summary,
+				Valid:    false,
+				Variables: map[string]string{
+					"querysubtitle": summary,
+				},
 			}}
-		default:
-			return []AlfredItem{{Title: "未知类型: " + key, Valid: false}}
 		}
 	}
 
-	return []AlfredItem{{Title: "未知命令: " + action, Valid: false}}
+	return []AlfredItem{{
+		Title: "未知命令: " + action,
+		Valid: false,
+	}}
 }
 
+// 小工具：找冒号
 func indexColon(s string) int {
 	for i, c := range s {
 		if c == ':' {
