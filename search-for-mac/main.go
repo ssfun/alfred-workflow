@@ -18,21 +18,16 @@ var a = pinyin.NewArgs()
 // ---------------- 多音字字典 ----------------
 var polyphonic = map[rune][]string{}
 
-// 加载 polyphonic.json
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Println("⚠️ 未找到 polyphonic.json，使用内置最小字典")
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
-	        '长': {"chang", "zhang"},
-	        '重': {"chong", "zhong"},
-	        '乐': {"le", "yue"},
-	        '处': {"chu", "cu"},
-	        '还': {"hai", "huan"},
-	        '藏': {"cang", "zang"},
-	        '假': {"jia", "jie"},
-	        '召': {"zhao", "shao"},
+			'长': {"chang", "zhang"},
+			'重': {"chong", "zhong"},
+			'乐': {"le", "yue"},
+			'处': {"chu", "cu"},
 		}
 		return
 	}
@@ -79,7 +74,7 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	return full, initials
 }
 
-// ---------------- 多音字重试 ----------------
+// ---------------- 拼音多音字重试 ----------------
 func retryPolyphonicMatch(query string, name string, full string) bool {
 	runes := []rune(name)
 	for i, r := range runes {
@@ -116,7 +111,6 @@ type Query struct {
 	FileType string
 }
 
-// 支持返回多个 Query（yhxx . → [yhxx, yhxx .]）
 func parseQueryV2(raw string) []Query {
 	tokens := strings.Fields(raw)
 	if len(tokens) == 0 {
@@ -140,15 +134,12 @@ func parseQueryV2(raw string) []Query {
 	}
 	queries = append(queries, q)
 
-	// 如果末尾是 "."，再加一个忽略点的版本
 	if strings.HasSuffix(q.Keywords, ".") {
 		queries = append(queries, Query{
 			Keywords: strings.TrimSuffix(q.Keywords, "."),
 			FileType: q.FileType,
 		})
 	}
-
-	// 如果最后 token 是单独的 "."
 	if tokens[len(tokens)-1] == "." && len(tokens) > 1 {
 		queries = append(queries, Query{
 			Keywords: strings.Join(tokens[:len(tokens)-1], " "),
@@ -240,6 +231,56 @@ func fuzzyMatchAllowOneError(query, target string) bool {
 	return dp[m][n] <= 1
 }
 
+// ---- 核心优化：打分 ----------------
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 128 {
+			return false
+		}
+	}
+	return true
+}
+
+func matchScore(query, name string, pc *PinyinCache) int {
+	q := strings.ToLower(query)
+	nameLower := strings.ToLower(name)
+	score := 0
+
+	// 英文名优先策略
+	if nameLower == q {
+		return 500 // 完全相同最佳
+	}
+	if strings.HasPrefix(nameLower, q) {
+		return 450 // 前缀优先
+	}
+	if strings.Contains(nameLower, q) {
+		return 400 // 子串优先
+	}
+	if looseMatch(q, nameLower) {
+		score = max(score, 250) // 松散子序列，得分降低
+	}
+
+	// 中文拼音策略
+	full, initials := pc.Get(name)
+	if !isASCII(name) {
+		if looseMatch(q, full) {
+			if len(full) == len(q) {
+				score = max(score, 380)
+			} else {
+				score = max(score, 300)
+			}
+		} else if retryPolyphonicMatch(q, name, full) {
+			score = max(score, 200)
+		} else if fuzzyMatchAllowOneError(q, full) {
+			score = max(score, 150)
+		}
+		if looseMatch(q, initials) {
+			score = max(score, 180)
+		}
+	}
+	return score
+}
+
 func min3(a, b, c int) int {
 	if a < b {
 		if a < c {
@@ -252,35 +293,11 @@ func min3(a, b, c int) int {
 	}
 	return c
 }
-
-func matchScore(query, name string, pc *PinyinCache) int {
-	q := strings.ToLower(query)
-	nameLower := strings.ToLower(name)
-	scores := []int{}
-
-	if looseMatch(q, nameLower) {
-		scores = append(scores, 300)
+func max(a, b int) int {
+	if a > b {
+		return a
 	}
-
-	full, initials := pc.Get(name)
-	if looseMatch(q, full) {
-		scores = append(scores, 200)
-	} else if retryPolyphonicMatch(q, name, full) {
-		scores = append(scores, 170)
-	} else if fuzzyMatchAllowOneError(q, full) {
-		scores = append(scores, 140)
-	}
-	if looseMatch(q, initials) {
-		scores = append(scores, 150)
-	}
-
-	max := 0
-	for _, s := range scores {
-		if s > max {
-			max = s
-		}
-	}
-	return max
+	return b
 }
 
 // ---------------- 文件大小格式化 ----------------
