@@ -96,19 +96,27 @@ type Query struct {
 	FileType string
 }
 
+// 改进版 parseQuery，避免输入空格时 keywords 丢失
 func parseQuery(raw string) Query {
 	tokens := strings.Fields(raw)
 	q := Query{}
-	keywords := []string{}
-	for _, t := range tokens {
-		low := strings.ToLower(t)
-		if low == "dir" || low == "file" || strings.HasPrefix(low, ".") {
-			q.FileType = low
+	if len(tokens) == 0 {
+		return q
+	}
+
+	// 第一个 token 始终作为关键字
+	q.Keywords = tokens[0]
+
+	// 如果最后一个 token 是过滤器，则识别 fileType
+	if len(tokens) > 1 {
+		last := strings.ToLower(tokens[len(tokens)-1])
+		if last == "dir" || last == "file" || strings.HasPrefix(last, ".") {
+			q.FileType = last
 		} else {
-			keywords = append(keywords, t)
+			// 否则拼接多个 token 作为 keywords
+			q.Keywords = strings.Join(tokens, " ")
 		}
 	}
-	q.Keywords = strings.Join(keywords, " ")
 	return q
 }
 
@@ -174,6 +182,50 @@ func looseMatch(query, target string) bool {
 	return i == len(query)
 }
 
+// 允许 1 个字符拼音错误的模糊匹配
+func fuzzyMatchAllowOneError(query, target string) bool {
+	m, n := len(query), len(target)
+	if m == 0 {
+		return true
+	}
+	if abs(m-n) > 1 {
+		return false
+	}
+	dp := make([][]int, m+1)
+	for i := range dp {
+		dp[i] = make([]int, n+1)
+	}
+	for i := 0; i <= m; i++ {
+		dp[i][0] = i
+	}
+	for j := 0; j <= n; j++ {
+		dp[0][j] = j
+	}
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if query[i-1] == target[j-1] {
+				dp[i][j] = dp[i-1][j-1]
+			} else {
+				dp[i][j] = min3(dp[i-1][j-1]+1, dp[i-1][j]+1, dp[i][j-1]+1)
+			}
+		}
+	}
+	return dp[m][n] <= 1
+}
+
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
 func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
@@ -191,14 +243,16 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		}
 	}
 
-	// 拼音
+	// 拼音匹配
 	full, initials := pc.Get(name)
 
 	if looseMatch(q, full) {
 		scores = append(scores, 200-abs(len(full)-len(q)))
 	} else {
 		if retryPolyphonicMatch(q, name, full) {
-			scores = append(scores, 170) // 多音字重试，权重低一点
+			scores = append(scores, 170) // 多音字重试
+		} else if fuzzyMatchAllowOneError(q, full) {
+			scores = append(scores, 140) // 模糊拼音匹配，权重最低
 		}
 	}
 
@@ -215,7 +269,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	return max
 }
 
-// ---------------- 搜索逻辑（WalkDir 并发主目录） ----------------
+// ---------------- 搜索逻辑 ----------------
 type Result struct {
 	Score   int
 	Path    string
@@ -289,6 +343,7 @@ type AlfredItem struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Arg      string `json:"arg"`
+	Valid    bool   `json:"valid"`
 	Icon     struct {
 		Type string `json:"type"`
 		Path string `json:"path"`
@@ -350,23 +405,36 @@ func main() {
 	}
 
 	items := []AlfredItem{}
-	for _, r := range results {
+	if len(results) == 0 {
 		item := AlfredItem{
-			Uid:   r.Path,
-			Title: r.Name,
-			Arg:   r.Path,
+			Title:    "没有找到匹配结果",
+			Subtitle: "请尝试调整关键词或目录设置",
+			Arg:      "",
+			Valid:    false,
 		}
-		parent := filepath.Dir(r.Path)
-		if r.IsDir {
-			item.Subtitle = fmt.Sprintf("%s", parent)
-		} else {
-			item.Subtitle = fmt.Sprintf("%s | %.1fKB | 修改: %s",
-				parent, float64(r.Size)/1024,
-				r.ModTime.Format("2006-01-02 15:04"))
-		}
-		item.Icon.Type = "fileicon"
-		item.Icon.Path = r.Path
+		item.Icon.Type = "icon"
+		item.Icon.Path = "alert.png"
 		items = append(items, item)
+	} else {
+		for _, r := range results {
+			item := AlfredItem{
+				Uid:   r.Path,
+				Title: r.Name,
+				Arg:   r.Path,
+				Valid: true,
+			}
+			parent := filepath.Dir(r.Path)
+			if r.IsDir {
+				item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
+			} else {
+				item.Subtitle = fmt.Sprintf("📄 文件 | %s | %.1fKB | 修改: %s",
+					parent, float64(r.Size)/1024,
+					r.ModTime.Format("2006-01-02 15:04"))
+			}
+			item.Icon.Type = "fileicon"
+			item.Icon.Path = r.Path
+			items = append(items, item)
+		}
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{"items": items})
