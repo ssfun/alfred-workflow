@@ -32,6 +32,15 @@
 - `GITHUB_TOKEN`  
   GitHub API Token（可选，但推荐设置，否则 API 有速率限制；设置后能访问私有仓库）
 
+- `MAX_REPOS`  
+  个人 repos 结果最大输出条目（可选）
+
+- `MAX_STARS`  
+  个人 stars 结果最大输出条目（可选）
+
+- `MAX_GISTS`  
+  个人 gist 结果最大输出条目（可选）
+
 - `GITHUB_CACHE_DIR`  
   缓存存放路径（可选）。若未定义，则默认：
   ```
