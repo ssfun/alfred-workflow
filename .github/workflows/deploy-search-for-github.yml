@@ -1,7 +1,7 @@
 # .github/workflows/build.yml
 
 # 工作流名称
-name: Build Github Control Workflow Go Binary
+name: Build Search for Github Go Binary
 
 # 工作流触发器
 on:
@@ -23,15 +23,15 @@ jobs:
           go-version: "1.22"
 
       - name: Setup Go Module
-        working-directory: ./github-control-workflow
+        working-directory: ./search-for-github
         run: |
           if [ ! -f go.mod ]; then
-            go mod init github-control-workflow
+            go mod init search-for-github
           fi
           go mod tidy
     
       - name: Build arm64 binary
-        working-directory: ./github-control-workflow
+        working-directory: ./search-for-github
         run: |
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
           go build -ldflags="-s -w" -o githubwf
@@ -41,5 +41,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: githubwf-darwin-arm64
-          path: ./github-control-workflow/githubwf
+          path: ./search-for-github/githubwf
 
