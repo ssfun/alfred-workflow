@@ -20,10 +20,14 @@ func loadPolyphonicDict(path string) {
 	if err != nil {
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
-			'长': {"chang", "zhang"},
-			'重': {"chong", "zhong"},
-			'乐': {"le", "yue"},
-			'处': {"chu", "cu"},
+	        '长': {"chang", "zhang"},
+	        '重': {"chong", "zhong"},
+	        '乐': {"le", "yue"},
+	        '处': {"chu", "cu"},
+	        '还': {"hai", "huan"},
+	        '藏': {"cang", "zang"},
+	        '假': {"jia", "jie"},
+	        '召': {"zhao", "shao"},
 		}
 		return
 	}
