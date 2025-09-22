@@ -34,7 +34,7 @@ jobs:
         working-directory: ./search-emoji-workflow
         run: |
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
-          go build -ldflags="-s -w" -o emojiwf
+          go build -o emojiwf
           strip emojiwf
 
       - name: Upload artifact
