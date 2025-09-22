@@ -13,9 +13,9 @@ import (
 	"github.com/mozillazg/go-pinyin"
 )
 
-// ---------------- 拼音缓存 ----------------
 var a = pinyin.NewArgs()
 
+// ---------------- 拼音缓存 ----------------
 type PinyinCache struct {
 	mu    sync.RWMutex
 	cache map[string][2]string
@@ -48,7 +48,7 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 // ---------------- 查询解析 ----------------
 type Query struct {
 	Keywords string
-	FileType string // "dir" / "file" / ".ext"
+	FileType string
 }
 
 func parseQuery(raw string) Query {
@@ -67,8 +67,8 @@ func parseQuery(raw string) Query {
 	return q
 }
 
-// ---------------- 配置读取（环境变量） ----------------
-func getConfig() ([]string, []string, int) {
+// ---------------- 配置 ----------------
+func getConfig() ([]string, []string, int, int, int) {
 	homeDir, _ := os.UserHomeDir()
 
 	// 搜索目录
@@ -99,6 +99,18 @@ func getConfig() ([]string, []string, int) {
 		fmt.Sscanf(os.Getenv("MAX_RESULTS"), "%d", &maxRes)
 	}
 
+	// 最大扫描深度
+	maxDepth := -1 // -1 表示无限制
+	if os.Getenv("MAX_DEPTH") != "" {
+		fmt.Sscanf(os.Getenv("MAX_DEPTH"), "%d", &maxDepth)
+	}
+
+	// worker 数量
+	workers := 8
+	if os.Getenv("WORKERS") != "" {
+		fmt.Sscanf(os.Getenv("WORKERS"), "%d", &workers)
+	}
+
 	// 白名单完整路径
 	var wl []string
 	for _, d := range dirs {
@@ -108,13 +120,10 @@ func getConfig() ([]string, []string, int) {
 		}
 	}
 
-	return wl, excl, maxRes
+	return wl, excl, maxRes, maxDepth, workers
 }
 
 // ---------------- 匹配算法 ----------------
-
-// 宽松拼音匹配：允许输入 query 字符在 target 中不严格连续，但顺序不变
-// 类似 subsequence match，且可以跳过中间部分，适合容错输入
 func looseMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -131,7 +140,6 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	nameLower := strings.ToLower(name)
 	scores := []int{}
 
-	// 文件名直配优先
 	if looseMatch(q, nameLower) {
 		pos := strings.Index(nameLower, q)
 		if nameLower == q {
@@ -144,8 +152,6 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	}
 
 	full, initials := pc.Get(name)
-
-	// 用宽松匹配增强容错
 	if looseMatch(q, full) {
 		scores = append(scores, 200-abs(len(full)-len(q)))
 	}
@@ -188,37 +194,59 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
-func searchDir(base string, query Query, pc *PinyinCache, excludes map[string]bool, wg *sync.WaitGroup, resultChan chan<- Result) {
+// ---------------- Worker Pool ----------------
+type Task struct {
+	Path  string
+	Depth int
+}
+
+func worker(id int, wg *sync.WaitGroup, tasks <-chan Task, query Query, pc *PinyinCache, excludes map[string]bool, baseDepth, maxDepth int, resultChan chan<- Result) {
 	defer wg.Done()
-	filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+	for task := range tasks {
+		entries, err := os.ReadDir(task.Path)
 		if err != nil {
-			return nil
-		}
-		name := d.Name()
-		if strings.HasPrefix(name, ".") || excludes[name] {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !typeFilter(path, d.IsDir(), query.FileType) {
-			return nil
+			continue
 		}
 
-		score := matchScore(query.Keywords, name, pc)
-		if score > 0 {
-			info, _ := os.Stat(path)
-			resultChan <- Result{
-				Score:   score,
-				Path:    path,
-				Name:    name,
-				IsDir:   d.IsDir(),
-				ModTime: info.ModTime(),
-				Size:    info.Size(),
+		for _, entry := range entries {
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") || excludes[name] {
+				continue
+			}
+
+			fullPath := filepath.Join(task.Path, name)
+			info, err := os.Stat(fullPath)
+			if err != nil {
+				continue
+			}
+
+			// 匹配
+			if typeFilter(fullPath, entry.IsDir(), query.FileType) {
+				score := matchScore(query.Keywords, name, pc)
+				if score > 0 {
+					resultChan <- Result{
+						Score:   score,
+						Path:    fullPath,
+						Name:    name,
+						IsDir:   entry.IsDir(),
+						ModTime: info.ModTime(),
+						Size:    info.Size(),
+					}
+				}
+			}
+
+			// 目录且深度允许 -> 加入队列
+			if entry.IsDir() {
+				if maxDepth == -1 || task.Depth+1 <= maxDepth {
+					// 投递新任务
+					go func(p string, depth int) {
+						// 投递任务（防止阻塞，可以用 select 检查，但这里保证容量足够）
+						tasks <- Task{Path: p, Depth: depth}
+					}(fullPath, task.Depth+1)
+				}
 			}
 		}
-		return nil
-	})
+	}
 }
 
 // ---------------- Alfred 输出 ----------------
@@ -242,76 +270,53 @@ func main() {
 	rawQuery := os.Args[1]
 	query := parseQuery(rawQuery)
 
-	whitelistDirs, excludesList, maxRes := getConfig()
+	whitelistDirs, excludesList, maxRes, maxDepth, workerCount := getConfig()
 	excludesMap := make(map[string]bool)
 	for _, e := range excludesList {
 		excludesMap[e] = true
 	}
 
 	pc := NewPinyinCache()
-	resultChan := make(chan Result, 1000)
+	resultChan := make(chan Result, 5000)
+	tasks := make(chan Task, 1000) // 任务队列
+
 	var wg sync.WaitGroup
 
-	for _, d := range whitelistDirs {
+	// 启动 worker
+	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go searchDir(d, query, pc, excludesMap, &wg, resultChan)
+		go worker(i, &wg, tasks, query, pc, excludesMap, 0, maxDepth, resultChan)
 	}
 
+	// 投递初始任务
+	for _, d := range whitelistDirs {
+		tasks <- Task{Path: d, Depth: 0}
+	}
+
+	// 等待完成
 	go func() {
 		wg.Wait()
 		close(resultChan)
 	}()
 
 	results := []Result{}
-	seen := make(map[string]bool) // 去重
-
+	seen := make(map[string]bool)
 	for r := range resultChan {
-		if seen[r.Path] {
-			continue
+		if !seen[r.Path] {
+			seen[r.Path] = true
+			results = append(results, r)
 		}
-		seen[r.Path] = true
-		results = append(results, r)
 	}
 
-	// 排序 + 权重优化
+	// 排序
 	sort.Slice(results, func(i, j int) bool {
 		si, sj := results[i].Score, results[j].Score
-
-		// 最近修改加权
 		if results[i].ModTime.After(time.Now().AddDate(0, 0, -30)) {
 			si += 50
 		}
 		if results[j].ModTime.After(time.Now().AddDate(0, 0, -30)) {
 			sj += 50
 		}
-
-		// 类型优先
-		if query.FileType == "dir" {
-			if results[i].IsDir && !results[j].IsDir {
-				return true
-			}
-			if !results[i].IsDir && results[j].IsDir {
-				return false
-			}
-		}
-		if query.FileType == "file" {
-			if !results[i].IsDir && results[j].IsDir {
-				return true
-			}
-			if results[i].IsDir && !results[j].IsDir {
-				return false
-			}
-		}
-
-		// 扩展名优先
-		if strings.HasPrefix(query.FileType, ".") {
-			iMatch := strings.HasSuffix(strings.ToLower(results[i].Path), query.FileType)
-			jMatch := strings.HasSuffix(strings.ToLower(results[j].Path), query.FileType)
-			if iMatch != jMatch {
-				return iMatch
-			}
-		}
-
 		return si > sj
 	})
 
@@ -326,17 +331,14 @@ func main() {
 			Title: r.Name,
 			Arg:   r.Path,
 		}
-
-		// Subtitle 优化
 		parent := filepath.Dir(r.Path)
 		if r.IsDir {
-			item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
+			item.Subtitle = fmt.Sprintf("%s", parent)
 		} else {
-			item.Subtitle = fmt.Sprintf("📄 文件 | %s | %.1fKB | 修改: %s",
+			item.Subtitle = fmt.Sprintf("%s | %.1fKB | 修改: %s",
 				parent, float64(r.Size)/1024,
 				r.ModTime.Format("2006-01-02 15:04"))
 		}
-
 		item.Icon.Type = "fileicon"
 		item.Icon.Path = r.Path
 		items = append(items, item)
@@ -346,7 +348,6 @@ func main() {
 	fmt.Println(string(data))
 }
 
-// ---------------- 工具函数 ----------------
 func abs(x int) int {
 	if x < 0 {
 		return -x
