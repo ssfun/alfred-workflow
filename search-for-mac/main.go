@@ -278,56 +278,55 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 
 // ---------------- 打分 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
-	q := strings.ToLower(query)
-	nameLower := strings.ToLower(name)
-	score := 0
-	debug := os.Getenv("DEBUG") == "1"
+    q := strings.ToLower(query)
+    nameLower := strings.ToLower(name)
+    score := 0
+    debug := os.Getenv("DEBUG") == "1"
 
-	// 英文文件
-	if isASCII(name) && !containsChinese(name) {
-		if nameLower == q {
-			return 500
-		}
-		if strings.HasPrefix(nameLower, q) {
-			return 450
-		}
-		if strings.Contains(nameLower, q) {
-			return 400
-		}
-		return 0
-	}
+    // -------- 英文文件 --------
+    if isASCII(name) && !containsChinese(name) {
+        if nameLower == q {
+            return 500
+        }
+        if strings.HasPrefix(nameLower, q) {
+            return 450
+        }
+        if strings.Contains(nameLower, q) {
+            return 400
+        }
+        return 0
+    }
 
-	// 中文文件
-	full, initials := pc.Get(name)
+    // -------- 中文文件 --------
+    full, initials := pc.Get(name)
 
-	// 首字母优先
-	if strings.EqualFold(q, initials) {
-		score = max(score, 380)
-	} else if looseMatch(q, initials) {
-		score = max(score, 250)
-	}
+    // 1. 首字母
+    if strings.EqualFold(q, initials) {
+        score = max(score, 380)
+    } else if looseMatch(q, initials) {
+        score = max(score, 250)
+    }
 
-	// 全拼
-	if strings.EqualFold(q, full) {
-		score = max(score, 350)
-	} else if looseMatch(q, full) {
-		score = max(score, 120)
-	}
+    // 2. 全拼
+    if strings.EqualFold(q, full) {
+        score = max(score, 350)
+    }
 
-	// 多音字
-	if retryPolyphonicMatch(q, name, full) {
-		score = max(score, 120)
-	}
+    // 3. 多音字
+    if retryPolyphonicMatch(q, name, full) {
+        score = max(score, 120)
+    }
 
-	// Fuzzy 容错
-	if len(q) >= 3 && abs(len(q)-len(full)) <= 1 && fuzzyMatchAllowOneError(q, full) {
-		score = max(score, 100)
-	}
+    // 4. Fuzzy
+    if len(q) >= 3 && abs(len(q)-len(full)) <= 1 && fuzzyMatchAllowOneError(q, full) {
+        score = max(score, 100)
+    }
 
-	if debug && score > 0 {
-		fmt.Fprintln(os.Stderr, "DEBUG:", name, "→ q:", q, "full:", full, "initials:", initials, "score:", score)
-	}
-	return score
+    if debug && score > 0 {
+        fmt.Fprintln(os.Stderr,
+            "DEBUG:", name, "→ q:", q, "full:", full, "initials:", initials, "score:", score)
+    }
+    return score
 }
 
 // ---------------- 文件大小 ----------------
