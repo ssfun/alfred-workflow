@@ -5,21 +5,33 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
-	"sort"
+
 	"github.com/mozillazg/go-pinyin"
 )
 
 // ---------------- CONFIG ----------------
 var (
-	homeDir, _     = os.UserHomeDir()
-	whitelistDirs  = []string{"Documents", "Desktop", "Downloads"}
-	excludes       = map[string]bool{".git": true, "__pycache__": true, "node_modules": true}
-	maxResults     = 100
+	homeDir, _    = os.UserHomeDir()
+	whitelistDirs = []string{
+		"Documents",
+		"Desktop",
+		"Downloads",
+	}
+
+	excludes = map[string]bool{
+		".git":        true,
+		"__pycache__": true,
+		"node_modules": true,
+		".DS_Store":   true,
+	}
+
+	maxResults = 100
 )
 
-// ---------------- 拼音工具 ----------------
+// ---------------- 拼音缓存 ----------------
 var a = pinyin.NewArgs()
 
 type PinyinCache struct {
@@ -40,7 +52,6 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.RUnlock()
 
 	full := strings.Join(pinyin.LazyPinyin(name, a), "")
-
 	args := pinyin.NewArgs()
 	args.Style = pinyin.FirstLetter
 	initials := strings.Join(pinyin.LazyPinyin(name, args), "")
@@ -48,6 +59,7 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{full, initials}
 	pc.mu.Unlock()
+
 	return full, initials
 }
 
@@ -100,6 +112,7 @@ type Result struct {
 	Score int
 	Path  string
 	Name  string
+	IsDir bool
 }
 
 func searchDir(base string, query string, pc *PinyinCache, wg *sync.WaitGroup, resultChan chan<- Result) {
@@ -117,7 +130,12 @@ func searchDir(base string, query string, pc *PinyinCache, wg *sync.WaitGroup, r
 		}
 		score := matchScore(query, name, pc)
 		if score > 0 {
-			resultChan <- Result{score, path, name}
+			resultChan <- Result{
+				Score: score,
+				Path:  path,
+				Name:  name,
+				IsDir: d.IsDir(),
+			}
 		}
 		return nil
 	})
@@ -129,6 +147,10 @@ type AlfredItem struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Arg      string `json:"arg"`
+	Icon     struct {
+		Type string `json:"type"`
+		Path string `json:"path"`
+	} `json:"icon"`
 }
 
 func main() {
@@ -142,6 +164,7 @@ func main() {
 	resultChan := make(chan Result, 1000)
 	var wg sync.WaitGroup
 
+	// 并发扫描多个白名单目录
 	for _, d := range whitelistDirs {
 		fullPath := filepath.Join(homeDir, d)
 		if stat, err := os.Stat(fullPath); err == nil && stat.IsDir() {
@@ -160,7 +183,7 @@ func main() {
 		results = append(results, r)
 	}
 
-	// 排序（简单按分数降序）
+	// 排序（分数降序）
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
 	})
@@ -171,19 +194,22 @@ func main() {
 
 	items := []AlfredItem{}
 	for _, r := range results {
-		items = append(items, AlfredItem{
+		item := AlfredItem{
 			Uid:      r.Path,
 			Title:    r.Name,
 			Subtitle: r.Path,
 			Arg:      r.Path,
-		})
+		}
+		item.Icon.Type = "fileicon"
+		item.Icon.Path = r.Path
+		items = append(items, item)
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{"items": items})
 	fmt.Println(string(data))
 }
 
-// ---------------- 工具函数 ----------------
+// ---------------- 工具 ----------------
 func abs(x int) int {
 	if x < 0 {
 		return -x
