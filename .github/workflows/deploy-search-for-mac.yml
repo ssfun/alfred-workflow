@@ -1,0 +1,27 @@
+name: Build Go Binary (Apple Silicon)
+
+on:
+  workflow_dispatch:   # 支持手动触发
+
+jobs:
+  build-macos-arm:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.22.x"
+
+      - name: Build for macOS ARM64
+        run: |
+          mkdir -p build
+          GOOS=darwin GOARCH=arm64 go build -o build/alfred_search main.go
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alfred_search-macos-arm64
+          path: build/alfred_search
