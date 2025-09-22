@@ -1,7 +1,7 @@
 # .github/workflows/build.yml
 
 # 工作流名称
-name: Build Get Emoji Workflow Go Binary
+name: Build Get Emoji Go Binary
 
 # 工作流触发器
 on:
@@ -23,15 +23,15 @@ jobs:
           go-version: "1.22"
 
       - name: Setup Go Module
-        working-directory: ./get-emoji-workflow
+        working-directory: ./get-emoji
         run: |
           if [ ! -f go.mod ]; then
-            go mod init get-emoji-workflow
+            go mod init get-emoji
           fi
           go mod tidy
     
       - name: Build arm64 binary
-        working-directory: ./get-emoji-workflow
+        working-directory: ./get-emoji
         run: |
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
           go build -o emojiwf
@@ -41,4 +41,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: emojiwf-darwin-arm64
-          path: ./get-emoji-workflow/emojiwf
+          path: ./get-emoji/emojiwf
