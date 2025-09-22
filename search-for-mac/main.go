@@ -19,6 +19,7 @@ var (
 		"Documents",
 		"Desktop",
 		"Downloads",
+		"Library/CloudStorage/Dropbox",
 	}
 
 	excludes = map[string]bool{
@@ -26,6 +27,13 @@ var (
 		"__pycache__": true,
 		"node_modules": true,
 		".DS_Store":   true,
+		"venv":   true,
+		"build":   true,
+		"dist":   true,
+		"logs":   true,
+		"tmp":   true,
+		".idea":   true,
+		".vscode":   true,
 	}
 
 	maxResults = 100
