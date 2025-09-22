@@ -63,16 +63,14 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	}
 	pc.mu.RUnlock()
 
-	// 改：逐字生成，应用 polyphonic 字典
 	var fullParts []string
 	var initialParts []string
 
 	for _, r := range name {
-		// 如果是中文
 		if r >= 0x4e00 && r <= 0x9fff {
-			// 查多音字表
+			// 多音字优先使用字典配置
 			if alts, ok := polyphonic[r]; ok && len(alts) > 0 {
-				choose := alts[0] // 用表里的第一个作为默认
+				choose := alts[0]
 				fullParts = append(fullParts, choose)
 				initialParts = append(initialParts, string(choose[0]))
 			} else {
@@ -280,56 +278,56 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 
 // ---------------- 打分 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
-    q := strings.ToLower(query)
-    nameLower := strings.ToLower(name)
-    score := 0
-    debug := os.Getenv("DEBUG") == "1"
+	q := strings.ToLower(query)
+	nameLower := strings.ToLower(name)
+	score := 0
+	debug := os.Getenv("DEBUG") == "1"
 
-    // 英文文件名
-    if isASCII(name) && !containsChinese(name) {
-        if nameLower == q {
-            return 500
-        }
-        if strings.HasPrefix(nameLower, q) {
-            return 450
-        }
-        if strings.Contains(nameLower, q) {
-            return 400
-        }
-        return 0
-    }
+	// 英文文件
+	if isASCII(name) && !containsChinese(name) {
+		if nameLower == q {
+			return 500
+		}
+		if strings.HasPrefix(nameLower, q) {
+			return 450
+		}
+		if strings.Contains(nameLower, q) {
+			return 400
+		}
+		return 0
+	}
 
-    // 中文文件名 → 拼音
-    full, initials := pc.Get(name)
+	// 中文文件
+	full, initials := pc.Get(name)
 
-    // ✅ 首字母精确匹配最高优先级
-    if strings.EqualFold(q, initials) {
-        score = max(score, 380) // 抬到比所有 loose/fuzzy 高
-    } else if looseMatch(q, initials) {
-        score = max(score, 240)
-    }
+	// 首字母优先
+	if strings.EqualFold(q, initials) {
+		score = max(score, 380)
+	} else if looseMatch(q, initials) {
+		score = max(score, 250)
+	}
 
-    // 全拼逻辑
-    if strings.EqualFold(q, full) {
-        score = max(score, 350)
-    } else if looseMatch(q, full) {
-        score = max(score, 200) // 降低
-    }
+	// 全拼
+	if strings.EqualFold(q, full) {
+		score = max(score, 350)
+	} else if looseMatch(q, full) {
+		score = max(score, 120)
+	}
 
-    // 多音字
-    if retryPolyphonicMatch(q, name, full) {
-        score = max(score, 180)
-    }
+	// 多音字
+	if retryPolyphonicMatch(q, name, full) {
+		score = max(score, 120)
+	}
 
-    // 模糊容错
-    if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
-        score = max(score, 160)
-    }
+	// Fuzzy 容错
+	if len(q) >= 3 && abs(len(q)-len(full)) <= 1 && fuzzyMatchAllowOneError(q, full) {
+		score = max(score, 100)
+	}
 
-    if debug && score > 0 {
-        fmt.Fprintln(os.Stderr, "DEBUG:", name, "→ q:", q, "full:", full, "initials:", initials, "score:", score)
-    }
-    return score
+	if debug && score > 0 {
+		fmt.Fprintln(os.Stderr, "DEBUG:", name, "→ q:", q, "full:", full, "initials:", initials, "score:", score)
+	}
+	return score
 }
 
 // ---------------- 文件大小 ----------------
