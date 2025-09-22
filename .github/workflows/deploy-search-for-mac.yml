@@ -1,27 +1,44 @@
-name: Build Search for Mac Binary
+# .github/workflows/build.yml
 
+# 工作流名称
+name: Build Search for Mac Go Binary
+
+# 工作流触发器
 on:
-  workflow_dispatch:   # 支持手动触发
+  # 允许手动在 Actions 页面触发
+  workflow_dispatch:
 
 jobs:
-  build-macos-arm:
+  build:
+    name: Build arm64 Binary
     runs-on: macos-latest
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: "1.22.x"
+          go-version: "1.22"
 
-      - name: Build for macOS ARM64
+      - name: Setup Go Module
+        working-directory: ./search-for-mac
         run: |
-          mkdir -p build
-          GOOS=darwin GOARCH=arm64 go build -o build/alfred_search main.go
+          if [ ! -f go.mod ]; then
+            go mod init search-for-mac
+          fi
+          go mod tidy
+    
+      - name: Build arm64 binary
+        working-directory: ./search-for-mac
+        run: |
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
+          go build -ldflags="-s -w" -o searchwf
+          strip searchwf
 
-      - name: Upload build artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: alfred_search-macos-arm64
-          path: build/alfred_search
+          name: searchwf-darwin-arm64
+          path: ./search-for-mac/searchwf
