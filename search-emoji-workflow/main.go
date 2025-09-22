@@ -78,10 +78,10 @@ func codesToNotoFilename(codes string) string {
 }
 
 // 下载文件
-func downloadFile(url, filepath string, overwrite bool) error {
+func downloadFile(url, targetPath string, overwrite bool) error {
 	if !overwrite {
-		if _, err := os.Stat(filepath); err == nil {
-			return nil // 已存在且不覆盖
+		if _, err := os.Stat(targetPath); err == nil {
+			return nil // 已存在，且无需覆盖
 		}
 	}
 	resp, err := http.Get(url)
@@ -89,15 +89,21 @@ func downloadFile(url, filepath string, overwrite bool) error {
 		return err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("http %s", resp.Status)
 	}
-	os.MkdirAll(filepath.Dir(filepath), 0755)
-	out, err := os.Create(filepath)
+
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return err
+	}
+
+	out, err := os.Create(targetPath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
+
 	_, err = io.Copy(out, resp.Body)
 	return err
 }
