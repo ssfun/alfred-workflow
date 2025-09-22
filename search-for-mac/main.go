@@ -24,10 +24,14 @@ func loadPolyphonicDict(path string) {
 		fmt.Println("⚠️ 未找到 polyphonic.json，使用内置最小字典")
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
-			'长': {"chang", "zhang"},
-			'重': {"chong", "zhong"},
-			'乐': {"le", "yue"},
-			'处': {"chu", "cu"},
+	        '长': {"chang", "zhang"},
+	        '重': {"chong", "zhong"},
+	        '乐': {"le", "yue"},
+	        '处': {"chu", "cu"},
+	        '还': {"hai", "huan"},
+	        '藏': {"cang", "zang"},
+	        '假': {"jia", "jie"},
+	        '召': {"zhao", "shao"},
 		}
 		return
 	}
@@ -72,6 +76,25 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.Unlock()
 
 	return full, initials
+}
+
+// ---------------- 工具函数 ----------------
+func containsChinese(s string) bool {
+	for _, r := range s {
+		if r >= 0x4e00 && r <= 0x9fff {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 128 {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------- 拼音多音字重试 ----------------
@@ -231,73 +254,48 @@ func fuzzyMatchAllowOneError(query, target string) bool {
 	return dp[m][n] <= 1
 }
 
-// ---- 核心优化：打分 ----------------
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 128 {
-			return false
-		}
-	}
-	return true
-}
-
+// ✅ 新版 matchScore：区分中文 & 英文
 func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
+
+	// 纯英文文件名 → 不跑拼音 fuzzy
+	if isASCII(name) && !containsChinese(name) {
+		if nameLower == q {
+			return 500
+		}
+		if strings.HasPrefix(nameLower, q) {
+			return 450
+		}
+		if strings.Contains(nameLower, q) {
+			return 400
+		}
+		if looseMatch(q, nameLower) {
+			return 250
+		}
+		return 0
+	}
+
+	// 中文文件名 → 走拼音匹配
+	full, initials := pc.Get(name)
 	score := 0
 
-	// 英文名优先策略
-	if nameLower == q {
-		return 500 // 完全相同最佳
+	if looseMatch(q, full) {
+		if len(full) == len(q) {
+			score = max(score, 380)
+		} else {
+			score = max(score, 300)
+		}
+	} else if retryPolyphonicMatch(q, name, full) {
+		score = max(score, 200)
+	} else if fuzzyMatchAllowOneError(q, full) {
+		score = max(score, 150)
 	}
-	if strings.HasPrefix(nameLower, q) {
-		return 450 // 前缀优先
-	}
-	if strings.Contains(nameLower, q) {
-		return 400 // 子串优先
-	}
-	if looseMatch(q, nameLower) {
-		score = max(score, 250) // 松散子序列，得分降低
+	if looseMatch(q, initials) {
+		score = max(score, 180)
 	}
 
-	// 中文拼音策略
-	full, initials := pc.Get(name)
-	if !isASCII(name) {
-		if looseMatch(q, full) {
-			if len(full) == len(q) {
-				score = max(score, 380)
-			} else {
-				score = max(score, 300)
-			}
-		} else if retryPolyphonicMatch(q, name, full) {
-			score = max(score, 200)
-		} else if fuzzyMatchAllowOneError(q, full) {
-			score = max(score, 150)
-		}
-		if looseMatch(q, initials) {
-			score = max(score, 180)
-		}
-	}
 	return score
-}
-
-func min3(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
-}
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // ---------------- 文件大小格式化 ----------------
