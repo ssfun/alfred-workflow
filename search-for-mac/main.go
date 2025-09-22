@@ -404,7 +404,7 @@ func main() {
 			Valid:    false,
 		}
 		item.Icon.Type = "icon"
-		item.Icon.Path = "alert.png"
+		item.Icon.Path = "icon.png"
 		items = append(items, item)
 	} else {
 		for _, r := range results {
