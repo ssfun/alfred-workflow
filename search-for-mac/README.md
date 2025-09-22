@@ -1,4 +1,4 @@
-## 🔍 file-search
+# 🔍 Search for Mac
 
 一个使用 **Go 编写** 的 **Alfred Workflow 文件搜索工具**，支持：
 - **拼音搜索**：首字母、全拼（精确/前缀）  
