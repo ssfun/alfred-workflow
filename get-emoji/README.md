@@ -1,6 +1,6 @@
 # README.md
 
-# Alfred Emoji Workflow (Go 实现版)
+# Alfred Emoji Workflow
 
 一个基于 **Go** 编写的高性能 Emoji 搜索与管理 Alfred Workflow。  
 支持 **分类搜索、Grid 大图标展示、最近使用记录、资源在线更新**，完全依赖 **单一二进制**，无第三方依赖。  
