@@ -12,9 +12,7 @@ import (
 	"github.com/mozillazg/go-pinyin"
 )
 
-// ---------------- CONFIG ----------------
-
-// 拼音缓存
+// ---------------- 拼音缓存（支持多音字） ----------------
 var a = pinyin.NewArgs()
 
 type PinyinCache struct {
@@ -26,23 +24,47 @@ func NewPinyinCache() *PinyinCache {
 	return &PinyinCache{cache: make(map[string][2]string)}
 }
 
-func (pc *PinyinCache) Get(name string) (string, string) {
+func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	pc.mu.RLock()
 	if val, ok := pc.cache[name]; ok {
 		pc.mu.RUnlock()
-		return val[0], val[1]
+		return strings.Split(val[0], ","), strings.Split(val[1], ",")
 	}
 	pc.mu.RUnlock()
 
-	full := strings.Join(pinyin.LazyPinyin(name, a), "")
+	// 全拼矩阵
 	args := pinyin.NewArgs()
+	pyMatrix := pinyin.Pinyin(name, args)
+	fullList := combinePinyin(pyMatrix)
+
+	// 首字母矩阵
 	args.Style = pinyin.FirstLetter
-	initials := strings.Join(pinyin.LazyPinyin(name, args), "")
+	pyMatrix2 := pinyin.Pinyin(name, args)
+	initList := combinePinyin(pyMatrix2)
 
 	pc.mu.Lock()
-	pc.cache[name] = [2]string{full, initials}
+	pc.cache[name] = [2]string{
+		strings.Join(fullList, ","),
+		strings.Join(initList, ","),
+	}
 	pc.mu.Unlock()
-	return full, initials
+
+	return fullList, initList
+}
+
+// 多音字组合展开
+func combinePinyin(matrix [][]string) []string {
+	results := []string{""}
+	for _, choices := range matrix {
+		var newResults []string
+		for _, base := range results {
+			for _, p := range choices {
+				newResults = append(newResults, base+p)
+			}
+		}
+		results = newResults
+	}
+	return results
 }
 
 // ---------------- 查询解析 ----------------
@@ -128,7 +150,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	nameLower := strings.ToLower(name)
 	scores := []int{}
 
-	// 文件名直配优先 - 完全匹配 / 前缀匹配加权
+	// 文件名直配优先
 	if fuzzyMatch(q, nameLower) {
 		pos := strings.Index(nameLower, q)
 		if nameLower == q {
@@ -140,16 +162,23 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		}
 	}
 
-	// 拼音全拼 + 首字母
-	full, initials := pc.Get(name)
-	if fuzzyMatch(q, full) {
-		scores = append(scores, 200-abs(len(full)-len(q)))
-	}
-	if fuzzyMatch(q, initials) {
-		scores = append(scores, 150-abs(len(initials)-len(q)))
+	// 拼音匹配（支持多音字）
+	fullList, initList := pc.GetAll(name)
+
+	for _, full := range fullList {
+		if fuzzyMatch(q, full) {
+			scores = append(scores, 200-abs(len(full)-len(q)))
+			break
+		}
 	}
 
-	// 返回最大分
+	for _, initials := range initList {
+		if fuzzyMatch(q, initials) {
+			scores = append(scores, 150-abs(len(initials)-len(q)))
+			break
+		}
+	}
+
 	max := 0
 	for _, s := range scores {
 		if s > max {
@@ -279,7 +308,7 @@ func main() {
 			}
 		}
 
-		// 扩展名筛选权重
+		// 扩展名权重
 		if strings.HasPrefix(query.FileType, ".") {
 			iMatch := strings.HasSuffix(strings.ToLower(results[i].Path), query.FileType)
 			jMatch := strings.HasSuffix(strings.ToLower(results[j].Path), query.FileType)
@@ -288,7 +317,6 @@ func main() {
 			}
 		}
 
-		// 默认分数优先
 		return si > sj
 	})
 
