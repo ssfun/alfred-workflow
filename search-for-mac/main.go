@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mozillazg/go-pinyin"
 )
@@ -190,10 +191,12 @@ func matchScore(query, name string, pc *PinyinCache) int {
 
 // ---------------- 搜索逻辑 ----------------
 type Result struct {
-	Score int
-	Path  string
-	Name  string
-	IsDir bool
+	Score   int
+	Path    string
+	Name    string
+	IsDir   bool
+	ModTime time.Time
+	Size    int64
 }
 
 func typeFilter(path string, isDir bool, fileType string) bool {
@@ -228,13 +231,17 @@ func searchDir(base string, query Query, pc *PinyinCache, excludes map[string]bo
 		if !typeFilter(path, d.IsDir(), query.FileType) {
 			return nil
 		}
+
 		score := matchScore(query.Keywords, name, pc)
 		if score > 0 {
+			info, _ := os.Stat(path)
 			resultChan <- Result{
-				Score: score,
-				Path:  path,
-				Name:  name,
-				IsDir: d.IsDir(),
+				Score:   score,
+				Path:    path,
+				Name:    name,
+				IsDir:   d.IsDir(),
+				ModTime: info.ModTime(),
+				Size:    info.Size(),
 			}
 		}
 		return nil
@@ -243,16 +250,18 @@ func searchDir(base string, query Query, pc *PinyinCache, excludes map[string]bo
 
 // ---------------- Alfred 输出 ----------------
 type AlfredItem struct {
-	Uid      string `json:"uid"`
-	Title    string `json:"title"`
-	Subtitle string `json:"subtitle"`
-	Arg      string `json:"arg"`
-	Icon     struct {
+	Uid          string `json:"uid"`
+	Title        string `json:"title"`
+	Subtitle     string `json:"subtitle"`
+	Arg          string `json:"arg"`
+	Quicklookurl string `json:"quicklookurl"`
+	Icon         struct {
 		Type string `json:"type"`
 		Path string `json:"path"`
 	} `json:"icon"`
 }
 
+// ---------------- 主函数 ----------------
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println(`{"items": []}`)
@@ -282,7 +291,13 @@ func main() {
 	}()
 
 	results := []Result{}
+	seen := make(map[string]bool) // 去重
+
 	for r := range resultChan {
+		if seen[r.Path] {
+			continue
+		}
+		seen[r.Path] = true
 		results = append(results, r)
 	}
 
@@ -290,7 +305,15 @@ func main() {
 	sort.Slice(results, func(i, j int) bool {
 		si, sj := results[i].Score, results[j].Score
 
-		// 文件夹/文件优先权重
+		// 最近修改加权
+		if results[i].ModTime.After(time.Now().AddDate(0, 0, -30)) {
+			si += 50
+		}
+		if results[j].ModTime.After(time.Now().AddDate(0, 0, -30)) {
+			sj += 50
+		}
+
+		// 类型优先
 		if query.FileType == "dir" {
 			if results[i].IsDir && !results[j].IsDir {
 				return true
@@ -308,7 +331,7 @@ func main() {
 			}
 		}
 
-		// 扩展名权重
+		// 扩展名优先
 		if strings.HasPrefix(query.FileType, ".") {
 			iMatch := strings.HasSuffix(strings.ToLower(results[i].Path), query.FileType)
 			jMatch := strings.HasSuffix(strings.ToLower(results[j].Path), query.FileType)
@@ -327,11 +350,22 @@ func main() {
 	items := []AlfredItem{}
 	for _, r := range results {
 		item := AlfredItem{
-			Uid:      r.Path,
-			Title:    r.Name,
-			Subtitle: r.Path,
-			Arg:      r.Path,
+			Uid:          r.Path,
+			Title:        r.Name,
+			Arg:          r.Path,
+			Quicklookurl: r.Path,
 		}
+
+		// Subtitle 优化
+		parent := filepath.Dir(r.Path)
+		if r.IsDir {
+			item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
+		} else {
+			item.Subtitle = fmt.Sprintf("📄 文件 | %s | %.1fKB | 修改: %s",
+				parent, float64(r.Size)/1024,
+				r.ModTime.Format("2006-01-02 15:04"))
+		}
+
 		item.Icon.Type = "fileicon"
 		item.Icon.Path = r.Path
 		items = append(items, item)
