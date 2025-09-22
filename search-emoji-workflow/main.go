@@ -25,11 +25,12 @@ type Item struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Arg      string `json:"arg"`
+	Match    string `json:"match,omitempty"`
 	Icon     Icon   `json:"icon"`
 }
 
 func main() {
-	// workflow 路径
+	// 找到 workflow 下的资源目录
 	baseDir, _ := os.Getwd()
 	dataFile := filepath.Join(baseDir, "emoji.json")
 	iconDir := filepath.Join(baseDir, "icons")
@@ -41,13 +42,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// JSON 反序列化
 	var emojis []Emoji
 	if err := json.Unmarshal(data, &emojis); err != nil {
 		fmt.Fprintf(os.Stderr, "error parsing emoji.json: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 获取用户输入 query
+	// 读取用户输入
 	query := ""
 	if len(os.Args) > 1 {
 		query = strings.ToLower(strings.Join(os.Args[1:], " "))
@@ -56,7 +58,8 @@ func main() {
 	var results []Item
 	for _, e := range emojis {
 		emojiChar := e.Char
-		text := strings.ToLower(e.Name + " " + e.Category + " " + e.Group + " " + e.Subgroup + " " + e.Char)
+		// 搜索提示串
+		searchText := strings.ToLower(e.Name + " " + e.Category + " " + e.Group + " " + e.Subgroup + " " + e.Char)
 
 		// 分类过滤 :xxx
 		if strings.HasPrefix(query, ":") {
@@ -65,24 +68,23 @@ func main() {
 				continue
 			}
 		} else {
-			// 普通搜索
-			if query != "" && !strings.Contains(text, query) {
+			// 普通搜索过滤
+			if query != "" && !strings.Contains(searchText, query) {
 				continue
 			}
 		}
 
-		// 转换 Code 为 PNG 文件路径 (1F600 -> 1f600.png)
+		// 确定 PNG 文件路径（例：1F600 -> 1f600.png）
 		code := strings.ToLower(strings.ReplaceAll(e.Codes, " ", "-"))
 		iconPath := filepath.Join(iconDir, code+".png")
 
-		item := Item{
-			Title:    emojiChar,                                  // Grid 下方小字：emoji 本身
-			Subtitle: fmt.Sprintf("%s | %s", e.Name, e.Category), // 搜索字段：名字 + 类别
-			Arg:      emojiChar,                                  // 返回复制的字符
+		results = append(results, Item{
+			Title:    emojiChar,                                  // Grid 展示大 emoji
+			Subtitle: fmt.Sprintf("%s | %s", e.Name, e.Category), // 底部说明
+			Arg:      emojiChar,                                  // 返回表情
+			Match:    searchText,                                 // ✅ 用于搜索
 			Icon:     Icon{Path: iconPath},
-		}
-
-		results = append(results, item)
+		})
 	}
 
 	// 如果没有结果
@@ -94,7 +96,7 @@ func main() {
 		})
 	}
 
-	// 输出 Alfred JSON
+	// 输出 JSON （符合 Alfred Script Filter 格式）
 	output, _ := json.Marshal(map[string]interface{}{"items": results})
 	fmt.Println(string(output))
 }
