@@ -17,17 +17,19 @@ type Emoji struct {
 	Subgroup string `json:"subgroup"`
 }
 
+type Icon struct {
+	Path string `json:"path"`
+}
+
 type Item struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Arg      string `json:"arg"`
-	Icon     struct {
-		Path string `json:"path"`
-	} `json:"icon"`
+	Icon     Icon   `json:"icon"`
 }
 
 func main() {
-	// workflow 目录下的资源
+	// workflow 路径
 	baseDir, _ := os.Getwd()
 	dataFile := filepath.Join(baseDir, "emoji.json")
 	iconDir := filepath.Join(baseDir, "icons")
@@ -45,7 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 获取用户 query
+	// 获取用户输入 query
 	query := ""
 	if len(os.Args) > 1 {
 		query = strings.ToLower(strings.Join(os.Args[1:], " "))
@@ -53,29 +55,46 @@ func main() {
 
 	var results []Item
 	for _, e := range emojis {
-		text := strings.ToLower(e.Name + " " + e.Category + " " + e.Group + " " + e.Char)
-		if query == "" || strings.Contains(text, query) {
-			item := Item{
-				Title:    e.Char,           // Grid view 下方小字
-				Subtitle: e.Name,           // 辅助信息
-				Arg:      e.Char,           // 返回给 workflow 的 emoji
-			}
-			// icon 文件路径（例：icons/1f600.png）
-			code := strings.ToLower(strings.ReplaceAll(e.Codes, " ", "-"))
-			item.Icon.Path = filepath.Join(iconDir, code+".png")
+		emojiChar := e.Char
+		text := strings.ToLower(e.Name + " " + e.Category + " " + e.Group + " " + e.Subgroup + " " + e.Char)
 
-			results = append(results, item)
+		// 分类过滤 :xxx
+		if strings.HasPrefix(query, ":") {
+			category := strings.TrimPrefix(query, ":")
+			if !strings.Contains(strings.ToLower(e.Category), category) {
+				continue
+			}
+		} else {
+			// 普通搜索
+			if query != "" && !strings.Contains(text, query) {
+				continue
+			}
 		}
+
+		// 转换 Code 为 PNG 文件路径 (1F600 -> 1f600.png)
+		code := strings.ToLower(strings.ReplaceAll(e.Codes, " ", "-"))
+		iconPath := filepath.Join(iconDir, code+".png")
+
+		item := Item{
+			Title:    emojiChar,                                  // Grid 下方小字：emoji 本身
+			Subtitle: fmt.Sprintf("%s | %s", e.Name, e.Category), // 搜索字段：名字 + 类别
+			Arg:      emojiChar,                                  // 返回复制的字符
+			Icon:     Icon{Path: iconPath},
+		}
+
+		results = append(results, item)
 	}
 
+	// 如果没有结果
 	if len(results) == 0 {
 		results = append(results, Item{
-			Title:    "未找到 Emoji",
+			Title:    "❌ 未找到 Emoji",
 			Subtitle: query,
 			Arg:      "",
 		})
 	}
 
+	// 输出 Alfred JSON
 	output, _ := json.Marshal(map[string]interface{}{"items": results})
 	fmt.Println(string(output))
 }
