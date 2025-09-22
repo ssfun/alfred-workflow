@@ -113,7 +113,7 @@ func parseQuery(raw string) Query {
 }
 
 // ---------------- 配置 ----------------
-func getConfig() ([]string, []string, int, int, int) {
+func getConfig() ([]string, []string, int, int) {
 	homeDir, _ := os.UserHomeDir()
 
 	// 搜索目录
@@ -150,12 +150,6 @@ func getConfig() ([]string, []string, int, int, int) {
 		fmt.Sscanf(os.Getenv("MAX_DEPTH"), "%d", &maxDepth)
 	}
 
-	// 默认 worker 数
-	workers := 8
-	if os.Getenv("WORKERS") != "" {
-		fmt.Sscanf(os.Getenv("WORKERS"), "%d", &workers)
-	}
-
 	// 白名单完整路径
 	var wl []string
 	for _, d := range dirs {
@@ -165,7 +159,7 @@ func getConfig() ([]string, []string, int, int, int) {
 		}
 	}
 
-	return wl, excl, maxRes, maxDepth, workers
+	return wl, excl, maxRes, maxDepth
 }
 
 // ---------------- 匹配算法 ----------------
@@ -204,7 +198,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		scores = append(scores, 200-abs(len(full)-len(q)))
 	} else {
 		if retryPolyphonicMatch(q, name, full) {
-			scores = append(scores, 170) // 多音字重试，权重次之
+			scores = append(scores, 170) // 多音字重试，权重低一点
 		}
 	}
 
@@ -212,7 +206,6 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		scores = append(scores, 150-abs(len(initials)-len(q)))
 	}
 
-	// 返回最高分
 	max := 0
 	for _, s := range scores {
 		if s > max {
@@ -222,7 +215,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	return max
 }
 
-// ---------------- 搜索逻辑（Worker Pool） ----------------
+// ---------------- 搜索逻辑（WalkDir 并发主目录） ----------------
 type Result struct {
 	Score   int
 	Path    string
@@ -230,10 +223,6 @@ type Result struct {
 	IsDir   bool
 	ModTime time.Time
 	Size    int64
-}
-type Task struct {
-	Path  string
-	Depth int
 }
 
 func typeFilter(path string, isDir bool, fileType string) bool {
@@ -252,45 +241,46 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
-func worker(id int, wg *sync.WaitGroup, tasks chan Task, query Query, pc *PinyinCache, excludes map[string]bool, maxDepth int, resultChan chan<- Result) {
+func searchDir(base string, baseDepth int, query Query, pc *PinyinCache, excludes map[string]bool, maxDepth int, resultChan chan<- Result, wg *sync.WaitGroup) {
 	defer wg.Done()
-	for task := range tasks {
-		entries, err := os.ReadDir(task.Path)
+	filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			continue
+			return nil
 		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if strings.HasPrefix(name, ".") || excludes[name] {
-				continue
-			}
-			fullPath := filepath.Join(task.Path, name)
-			info, err := os.Stat(fullPath)
-			if err != nil {
-				continue
-			}
-
-			if typeFilter(fullPath, entry.IsDir(), query.FileType) {
-				score := matchScore(query.Keywords, name, pc)
-				if score > 0 {
-					resultChan <- Result{
-						Score:   score,
-						Path:    fullPath,
-						Name:    name,
-						IsDir:   entry.IsDir(),
-						ModTime: info.ModTime(),
-						Size:    info.Size(),
-					}
-				}
-			}
-
-			if entry.IsDir() {
-				if maxDepth == -1 || task.Depth+1 <= maxDepth {
-					tasks <- Task{Path: fullPath, Depth: task.Depth + 1}
+		// 深度限制
+		if maxDepth > -1 {
+			curDepth := strings.Count(path, string(os.PathSeparator)) - baseDepth
+			if curDepth > maxDepth {
+				if d.IsDir() {
+					return filepath.SkipDir
 				}
 			}
 		}
-	}
+		name := d.Name()
+		if strings.HasPrefix(name, ".") || excludes[name] {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !typeFilter(path, d.IsDir(), query.FileType) {
+			return nil
+		}
+
+		score := matchScore(query.Keywords, name, pc)
+		if score > 0 {
+			info, _ := os.Stat(path)
+			resultChan <- Result{
+				Score:   score,
+				Path:    path,
+				Name:    name,
+				IsDir:   d.IsDir(),
+				ModTime: info.ModTime(),
+				Size:    info.Size(),
+			}
+		}
+		return nil
+	})
 }
 
 // ---------------- Alfred 输出 ----------------
@@ -314,30 +304,22 @@ func main() {
 	rawQuery := os.Args[1]
 	query := parseQuery(rawQuery)
 
-	whitelistDirs, excludesList, maxRes, maxDepth, workerCount := getConfig()
+	whitelistDirs, excludesList, maxRes, maxDepth := getConfig()
 	excludesMap := make(map[string]bool)
 	for _, e := range excludesList {
 		excludesMap[e] = true
 	}
 
 	pc := NewPinyinCache()
-	resultChan := make(chan Result, 5000)
-	tasks := make(chan Task, 1000)
-
+	resultChan := make(chan Result, 2000)
 	var wg sync.WaitGroup
 
-	// 启动 worker
-	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
-		go worker(i, &wg, tasks, query, pc, excludesMap, maxDepth, resultChan)
-	}
-
-	// 投递初始任务
 	for _, d := range whitelistDirs {
-		tasks <- Task{Path: d, Depth: 0}
+		wg.Add(1)
+		baseDepth := strings.Count(d, string(os.PathSeparator))
+		go searchDir(d, baseDepth, query, pc, excludesMap, maxDepth, resultChan, &wg)
 	}
 
-	// 等待完成
 	go func() {
 		wg.Wait()
 		close(resultChan)
