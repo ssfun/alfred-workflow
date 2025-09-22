@@ -283,6 +283,28 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	return max
 }
 
+// ---------------- 文件大小格式化 ----------------
+func formatSize(size int64) string {
+	if size < 1024 {
+		return fmt.Sprintf("%dB", size)
+	}
+	div, exp := int64(1024), 0
+	for n := size / 1024; n >= 1024 && exp < 2; n /= 1024 {
+		div *= 1024
+		exp++
+	}
+	value := float64(size) / float64(div)
+	switch exp {
+	case 0:
+		return fmt.Sprintf("%.1fKB", value)
+	case 1:
+		return fmt.Sprintf("%.1fMB", value)
+	case 2:
+		return fmt.Sprintf("%.1fGB", value)
+	}
+	return fmt.Sprintf("%.1fTB", float64(size)/float64(1024*1024*1024*1024))
+}
+
 // ---------------- 搜索逻辑 ----------------
 type Result struct {
 	Score   int
@@ -309,15 +331,7 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
-func searchDirOnce(
-	base string, baseDepth int,
-	queries []Query,
-	pc *PinyinCache,
-	excludes map[string]bool,
-	maxDepth int,
-	resultChan chan<- Result,
-	wg *sync.WaitGroup) {
-
+func searchDirOnce(base string, baseDepth int, queries []Query, pc *PinyinCache, excludes map[string]bool, maxDepth int, resultChan chan<- Result, wg *sync.WaitGroup) {
 	defer wg.Done()
 	filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -339,7 +353,6 @@ func searchDirOnce(
 			return nil
 		}
 
-		// 对每个 Query 计算分数
 		for _, q := range queries {
 			if !typeFilter(path, d.IsDir(), q.FileType) {
 				continue
@@ -434,7 +447,7 @@ func main() {
 			Valid:    false,
 		}
 		item.Icon.Type = "icon"
-		item.Icon.Path = "icon.png"
+		item.Icon.Path = "alert.png"
 		items = append(items, item)
 	} else {
 		for _, r := range results {
@@ -448,8 +461,9 @@ func main() {
 			if r.IsDir {
 				item.Subtitle = fmt.Sprintf("%s", parent)
 			} else {
-				item.Subtitle = fmt.Sprintf("%s | %.1fKB | 修改: %s",
-					parent, float64(r.Size)/1024,
+				item.Subtitle = fmt.Sprintf("%s | %s | 修改: %s",
+					parent,
+					formatSize(r.Size),
 					r.ModTime.Format("2006-01-02 15:04"))
 			}
 			item.Icon.Type = "fileicon"
