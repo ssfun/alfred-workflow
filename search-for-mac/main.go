@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-
+	"sort"
 	"github.com/mozillazg/go-pinyin"
 )
 
@@ -40,7 +40,10 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.RUnlock()
 
 	full := strings.Join(pinyin.LazyPinyin(name, a), "")
-	initials := strings.Join(pinyin.LazyPinyin(name, pinyin.NewArgs(pinyin.Args{Style: pinyin.FirstLetter})), "")
+
+	args := pinyin.NewArgs()
+	args.Style = pinyin.FirstLetter
+	initials := strings.Join(pinyin.LazyPinyin(name, args), "")
 
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{full, initials}
