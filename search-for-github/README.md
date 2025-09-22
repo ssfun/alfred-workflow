@@ -1,4 +1,4 @@
-# Search for Github Alfred Workflow
+# Search for Github
 
 一个基于 **Go** 编写的轻量级 Alfred Workflow，用于管理并快速搜索 GitHub 账户数据（Stars、Repos、Gists 等） 🚀。  
 编译后直接运行，支持缓存、本地模糊搜索与缓存管理。  
