@@ -33,17 +33,20 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	}
 	pc.mu.RUnlock()
 
-	// 全拼矩阵
+	// 全拼矩阵（启用多音字）
 	args1 := pinyin.NewArgs()
-	pyMatrix := pinyin.Pinyin(name, args1) // [["yin"], ["hang","xing"], ["xin"], ["xi"]]
-	fullList := combinePinyin(pyMatrix)   // => yinhangxinxi, yinxingxinxi
+	args1.Heteronym = true
+	pyMatrix := pinyin.Pinyin(name, args1)
+	fullList := combinePinyin(pyMatrix)
 
-	// 首字母矩阵
+	// 首字母矩阵（启用多音字）
 	args2 := pinyin.NewArgs()
 	args2.Style = pinyin.FirstLetter
-	pyMatrix2 := pinyin.Pinyin(name, args2) // [["y"], ["h","x"], ["x"], ["x"]]
-	initList := combinePinyin(pyMatrix2)    // => yhxx, yxxx
+	args2.Heteronym = true
+	pyMatrix2 := pinyin.Pinyin(name, args2)
+	initList := combinePinyin(pyMatrix2)
 
+	// 缓存（用逗号拼接避免数组 JSON 序列化）
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{
 		strings.Join(fullList, ","),
