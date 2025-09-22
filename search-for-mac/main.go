@@ -38,7 +38,7 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	pyMatrix := pinyin.Pinyin(name, args)
 	fullList := combinePinyin(pyMatrix)
 
-	// 首字母矩阵
+	// 首字母矩阵（修正点）
 	args.Style = pinyin.FirstLetter
 	pyMatrix2 := pinyin.Pinyin(name, args)
 	initList := combinePinyin(pyMatrix2)
@@ -53,7 +53,7 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	return fullList, initList
 }
 
-// 多音字组合展开
+// 组合函数保持不变
 func combinePinyin(matrix [][]string) []string {
 	results := []string{""}
 	for _, choices := range matrix {
