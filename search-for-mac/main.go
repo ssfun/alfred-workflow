@@ -120,6 +120,7 @@ type Query struct {
 }
 
 // parseQuery —— 允许空格和后缀过滤器
+// parseQuery —— 改进版，支持 "yhxx ." 这种输入
 func parseQuery(raw string) Query {
 	tokens := strings.Fields(raw)
 	q := Query{}
@@ -127,14 +128,28 @@ func parseQuery(raw string) Query {
 		return q
 	}
 
+	// 默认关键字取第一个
 	q.Keywords = tokens[0]
+
 	if len(tokens) > 1 {
-		last := strings.ToLower(tokens[len(tokens)-1])
-		if last == "dir" || last == "file" || strings.HasPrefix(last, ".") {
-			q.FileType = last
-		} else {
-			q.Keywords = strings.Join(tokens, " ")
+		last := tokens[len(tokens)-1]
+		lastLower := strings.ToLower(last)
+
+		// 如果最后一个是单独的 "."，忽略掉
+		if last == "." {
+			q.Keywords = strings.Join(tokens[:len(tokens)-1], " ")
+			return q
 		}
+
+		// 如果最后一个是过滤器
+		if lastLower == "dir" || lastLower == "file" || (strings.HasPrefix(lastLower, ".") && len(lastLower) > 1) {
+			q.FileType = lastLower
+			q.Keywords = strings.Join(tokens[:len(tokens)-1], " ")
+			return q
+		}
+
+		// 否则拼接所有 token
+		q.Keywords = strings.Join(tokens, " ")
 	}
 	return q
 }
