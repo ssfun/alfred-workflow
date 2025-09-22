@@ -15,13 +15,12 @@ import (
 
 var a = pinyin.NewArgs()
 
-// -------------------- 多音字字典 --------------------
+// -------------------- 多音字 --------------------
 var polyphonic = map[rune][]string{}
 
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// fallback 最小字典
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
 			'长': {"chang", "zhang"},
@@ -68,7 +67,6 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{full, initials}
 	pc.mu.Unlock()
-
 	return full, initials
 }
 
@@ -101,8 +99,20 @@ func abs(x int) int {
 	}
 	return x
 }
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
 
-// -------------------- 拼音重试 --------------------
+// -------------------- 多音字重试 --------------------
 func retryPolyphonicMatch(query string, name string, full string) bool {
 	runes := []rune(name)
 	for i, r := range runes {
@@ -133,7 +143,7 @@ func rebuildPinyin(runes []rune, idx int, alt string) string {
 	return strings.Join(parts, "")
 }
 
-// -------------------- 搜索配置 --------------------
+// -------------------- Query --------------------
 type Query struct {
 	Keywords string
 	FileType string
@@ -145,22 +155,16 @@ func parseQueryV2(raw string) []Query {
 		return []Query{}
 	}
 	var queries []Query
-	keywords := strings.Join(tokens, " ")
-
-	q := Query{Keywords: tokens[0]}
+	q := Query{Keywords: strings.Join(tokens, " ")}
 	if len(tokens) > 1 {
 		last := strings.ToLower(tokens[len(tokens)-1])
 		if last == "dir" || last == "file" || (strings.HasPrefix(last, ".") && len(last) > 1) {
 			q.FileType = last
 			q.Keywords = strings.Join(tokens[:len(tokens)-1], " ")
-		} else {
-			q.Keywords = keywords
 		}
-	} else {
-		q.Keywords = keywords
 	}
 	queries = append(queries, q)
-
+	// 宽松处理
 	if strings.HasSuffix(q.Keywords, ".") {
 		queries = append(queries, Query{Keywords: strings.TrimSuffix(q.Keywords, "."), FileType: q.FileType})
 	}
@@ -170,11 +174,23 @@ func parseQueryV2(raw string) []Query {
 	return queries
 }
 
+// -------------------- 配置 --------------------
 func getConfig() ([]string, []string, int, int) {
 	homeDir, _ := os.UserHomeDir()
 	dirs := []string{"Documents", "Desktop", "Downloads"}
 	if env := os.Getenv("SEARCH_DIRS"); env != "" {
 		dirs = strings.Split(env, ",")
+	}
+	// 转成绝对路径
+	fullDirs := []string{}
+	for _, d := range dirs {
+		d = strings.TrimSpace(d)
+		if !filepath.IsAbs(d) {
+			d = filepath.Join(homeDir, d)
+		}
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			fullDirs = append(fullDirs, d)
+		}
 	}
 	excludes := []string{".git", "__pycache__", "node_modules", ".DS_Store"}
 	if env := os.Getenv("EXCLUDES"); env != "" {
@@ -182,7 +198,7 @@ func getConfig() ([]string, []string, int, int) {
 	}
 	maxRes := 100
 	maxDepth := -1
-	return dirs, excludes, maxRes, maxDepth
+	return fullDirs, excludes, maxRes, maxDepth
 }
 
 // -------------------- 匹配算法 --------------------
@@ -196,7 +212,6 @@ func looseMatch(query, target string) bool {
 	}
 	return i == len(query)
 }
-
 func fuzzyMatchAllowOneError(query, target string) bool {
 	m, n := len(query), len(target)
 	if abs(m-n) > 1 {
@@ -224,85 +239,61 @@ func fuzzyMatchAllowOneError(query, target string) bool {
 	return dp[m][n] <= 1
 }
 
-func min3(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
-}
-
-// -------------------- 打分核心 --------------------
+// -------------------- 打分 --------------------
 func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
-	score := 0
 	debug := os.Getenv("DEBUG") == "1"
+	score := 0
 
+	// 英文文件名：严格匹配，不允许宽松
 	if isASCII(name) && !containsChinese(name) {
 		if nameLower == q {
 			score = 500
 			if debug {
-				fmt.Println("DEBUG:", name, "== exact match")
+				fmt.Println("DEBUG:", name, "== exact")
 			}
 			return score
 		}
 		if strings.HasPrefix(nameLower, q) {
 			score = 450
 			if debug {
-				fmt.Println("DEBUG:", name, "== prefix match")
+				fmt.Println("DEBUG:", name, "== prefix")
 			}
 			return score
 		}
 		if strings.Contains(nameLower, q) {
 			score = 400
 			if debug {
-				fmt.Println("DEBUG:", name, "== contains match")
+				fmt.Println("DEBUG:", name, "== contains")
 			}
 			return score
 		}
 		return 0
 	}
 
-	// 中文名 → 拼音
+	// 中文拼音逻辑
 	full, initials := pc.Get(name)
 	if full != "" {
 		if looseMatch(q, full) {
 			if len(full) == len(q) {
 				score = max(score, 380)
-				if debug {
-					fmt.Println("DEBUG:", name, "== pinyin exact loose")
-				}
 			} else {
 				score = max(score, 300)
-				if debug {
-					fmt.Println("DEBUG:", name, "== pinyin loose subseq")
-				}
 			}
 		}
 		if retryPolyphonicMatch(q, name, full) {
 			score = max(score, 200)
-			if debug {
-				fmt.Println("DEBUG:", name, "== polyphonic retry")
-			}
 		}
 		if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
 			score = max(score, 150)
-			if debug {
-				fmt.Println("DEBUG:", name, "== fuzzy pinyin")
-			}
 		}
 	}
 	if initials != "" && looseMatch(q, initials) {
 		score = max(score, 180)
-		if debug {
-			fmt.Println("DEBUG:", name, "== initials match")
-		}
+	}
+	if debug && score > 0 {
+		fmt.Printf("DEBUG: %s → %d\n", name, score)
 	}
 	return score
 }
@@ -384,7 +375,6 @@ func main() {
 		return
 	}
 	queries := parseQueryV2(os.Args[1])
-
 	dirs, excludesList, maxRes, _ := getConfig()
 	excludesMap := map[string]bool{}
 	for _, e := range excludesList {
@@ -396,7 +386,7 @@ func main() {
 	var wg sync.WaitGroup
 	for _, d := range dirs {
 		wg.Add(1)
-		go searchDirOnce(filepath.Join(os.Getenv("HOME"), d), queries, pc, excludesMap, resultChan, &wg)
+		go searchDirOnce(d, queries, pc, excludesMap, resultChan, &wg)
 	}
 	go func() { wg.Wait(); close(resultChan) }()
 
@@ -408,7 +398,6 @@ func main() {
 			results = append(results, r)
 		}
 	}
-
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score == results[j].Score {
 			return results[i].ModTime.After(results[j].ModTime)
@@ -436,7 +425,8 @@ func main() {
 			if r.IsDir {
 				item.Subtitle = fmt.Sprintf("%s", parent)
 			} else {
-				item.Subtitle = fmt.Sprintf("%s | %s | 修改: %s", parent, formatSize(r.Size), r.ModTime.Format("2006-01-02 15:04"))
+				item.Subtitle = fmt.Sprintf("%s | %s | 修改: %s",
+					parent, formatSize(r.Size), r.ModTime.Format("2006-01-02 15:04"))
 			}
 			item.Icon.Type = "fileicon"
 			item.Icon.Path = r.Path
