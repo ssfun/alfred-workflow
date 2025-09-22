@@ -15,10 +15,10 @@ import (
 
 var a = pinyin.NewArgs()
 
-// 全局多音字映射表
+// ---------------- 多音字字典 ----------------
 var polyphonic = map[rune][]string{}
 
-// 加载 polyphonic.json 文件
+// 加载 polyphonic.json
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -36,13 +36,11 @@ func loadPolyphonicDict(path string) {
 		}
 		return
 	}
-
 	tmp := make(map[string][]string)
 	if err := json.Unmarshal(data, &tmp); err != nil {
 		fmt.Println("⚠️ polyphonic.json 解析失败:", err)
 		return
 	}
-
 	for k, v := range tmp {
 		runes := []rune(k)
 		if len(runes) > 0 {
@@ -81,7 +79,7 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	return full, initials
 }
 
-// ---------------- 多音字重试逻辑 ----------------
+// ---------------- 多音字重试 ----------------
 func retryPolyphonicMatch(query string, name string, full string) bool {
 	runes := []rune(name)
 	for i, r := range runes {
@@ -98,13 +96,12 @@ func retryPolyphonicMatch(query string, name string, full string) bool {
 }
 
 func rebuildPinyin(runes []rune, idx int, alt string) string {
-	args := pinyin.NewArgs()
 	parts := []string{}
 	for i, r := range runes {
 		if i == idx {
 			parts = append(parts, alt)
 		} else {
-			py := pinyin.LazyPinyin(string(r), args)
+			py := pinyin.LazyPinyin(string(r), a)
 			if len(py) > 0 {
 				parts = append(parts, py[0])
 			}
@@ -119,39 +116,46 @@ type Query struct {
 	FileType string
 }
 
-// parseQuery —— 允许空格和后缀过滤器
-// parseQuery —— 改进版，支持 "yhxx ." 这种输入
-func parseQuery(raw string) Query {
+// 支持返回多个 Query（yhxx . → [yhxx, yhxx .]）
+func parseQueryV2(raw string) []Query {
 	tokens := strings.Fields(raw)
-	q := Query{}
 	if len(tokens) == 0 {
-		return q
+		return []Query{}
 	}
 
-	// 默认关键字取第一个
-	q.Keywords = tokens[0]
+	var queries []Query
+	keywords := strings.Join(tokens, " ")
 
+	q := Query{Keywords: tokens[0]}
 	if len(tokens) > 1 {
 		last := tokens[len(tokens)-1]
 		lastLower := strings.ToLower(last)
 
-		// 如果最后一个是单独的 "."，忽略掉
-		if last == "." {
-			q.Keywords = strings.Join(tokens[:len(tokens)-1], " ")
-			return q
-		}
-
-		// 如果最后一个是过滤器
 		if lastLower == "dir" || lastLower == "file" || (strings.HasPrefix(lastLower, ".") && len(lastLower) > 1) {
 			q.FileType = lastLower
 			q.Keywords = strings.Join(tokens[:len(tokens)-1], " ")
-			return q
+		} else {
+			q.Keywords = keywords
 		}
-
-		// 否则拼接所有 token
-		q.Keywords = strings.Join(tokens, " ")
 	}
-	return q
+	queries = append(queries, q)
+
+	// 如果末尾是 "."，再加一个忽略点的版本
+	if strings.HasSuffix(q.Keywords, ".") {
+		queries = append(queries, Query{
+			Keywords: strings.TrimSuffix(q.Keywords, "."),
+			FileType: q.FileType,
+		})
+	}
+
+	// 如果最后 token 是单独的 "."
+	if tokens[len(tokens)-1] == "." && len(tokens) > 1 {
+		queries = append(queries, Query{
+			Keywords: strings.Join(tokens[:len(tokens)-1], " "),
+			FileType: q.FileType,
+		})
+	}
+	return queries
 }
 
 // ---------------- 配置 ----------------
@@ -182,7 +186,6 @@ func getConfig() ([]string, []string, int, int) {
 	if os.Getenv("MAX_RESULTS") != "" {
 		fmt.Sscanf(os.Getenv("MAX_RESULTS"), "%d", &maxRes)
 	}
-
 	maxDepth := -1
 	if os.Getenv("MAX_DEPTH") != "" {
 		fmt.Sscanf(os.Getenv("MAX_DEPTH"), "%d", &maxDepth)
@@ -198,7 +201,7 @@ func getConfig() ([]string, []string, int, int) {
 	return wl, excl, maxRes, maxDepth
 }
 
-// ---------------- 匹配逻辑 ----------------
+// ---------------- 匹配算法 ----------------
 func looseMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -267,7 +270,6 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	} else if fuzzyMatchAllowOneError(q, full) {
 		scores = append(scores, 140)
 	}
-
 	if looseMatch(q, initials) {
 		scores = append(scores, 150)
 	}
@@ -307,7 +309,15 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
-func searchDir(base string, baseDepth int, query Query, pc *PinyinCache, excludes map[string]bool, maxDepth int, resultChan chan<- Result, wg *sync.WaitGroup) {
+func searchDirOnce(
+	base string, baseDepth int,
+	queries []Query,
+	pc *PinyinCache,
+	excludes map[string]bool,
+	maxDepth int,
+	resultChan chan<- Result,
+	wg *sync.WaitGroup) {
+
 	defer wg.Done()
 	filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -328,19 +338,23 @@ func searchDir(base string, baseDepth int, query Query, pc *PinyinCache, exclude
 			}
 			return nil
 		}
-		if !typeFilter(path, d.IsDir(), query.FileType) {
-			return nil
-		}
-		score := matchScore(query.Keywords, name, pc)
-		if score > 0 {
-			info, _ := os.Stat(path)
-			resultChan <- Result{
-				Score:   score,
-				Path:    path,
-				Name:    name,
-				IsDir:   d.IsDir(),
-				ModTime: info.ModTime(),
-				Size:    info.Size(),
+
+		// 对每个 Query 计算分数
+		for _, q := range queries {
+			if !typeFilter(path, d.IsDir(), q.FileType) {
+				continue
+			}
+			score := matchScore(q.Keywords, name, pc)
+			if score > 0 {
+				info, _ := os.Stat(path)
+				resultChan <- Result{
+					Score:   score,
+					Path:    path,
+					Name:    name,
+					IsDir:   d.IsDir(),
+					ModTime: info.ModTime(),
+					Size:    info.Size(),
+				}
 			}
 		}
 		return nil
@@ -360,6 +374,7 @@ type AlfredItem struct {
 	} `json:"icon"`
 }
 
+// ---------------- main ----------------
 func main() {
 	loadPolyphonicDict("polyphonic.json")
 
@@ -367,7 +382,7 @@ func main() {
 		fmt.Println(`{"items": []}`)
 		return
 	}
-	query := parseQuery(os.Args[1])
+	queries := parseQueryV2(os.Args[1])
 
 	whitelistDirs, excludesList, maxRes, maxDepth := getConfig()
 	excludesMap := make(map[string]bool)
@@ -381,7 +396,7 @@ func main() {
 	for _, d := range whitelistDirs {
 		wg.Add(1)
 		baseDepth := strings.Count(d, string(os.PathSeparator))
-		go searchDir(d, baseDepth, query, pc, excludesMap, maxDepth, resultChan, &wg)
+		go searchDirOnce(d, baseDepth, queries, pc, excludesMap, maxDepth, resultChan, &wg)
 	}
 	go func() {
 		wg.Wait()
@@ -389,10 +404,10 @@ func main() {
 	}()
 
 	results := []Result{}
-	seen := make(map[string]bool)
+	seen := map[string]int{}
 	for r := range resultChan {
-		if !seen[r.Path] {
-			seen[r.Path] = true
+		if prev, ok := seen[r.Path]; !ok || r.Score > prev {
+			seen[r.Path] = r.Score
 			results = append(results, r)
 		}
 	}
