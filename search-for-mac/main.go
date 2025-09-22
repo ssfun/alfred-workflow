@@ -310,6 +310,8 @@ func matchScore(query, name string, pc *PinyinCache) int {
     // 2. 全拼
     if strings.EqualFold(q, full) {
         score = max(score, 350)
+    }else if strings.HasPrefix(full, q) {
+        score = max(score, 300) // ✅ 增加全拼前缀匹配
     }
 
     // 3. 多音字（仅在 query 长度较短时尝试）
