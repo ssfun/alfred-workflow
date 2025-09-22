@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -16,6 +17,15 @@ type AlfredItem struct {
 		Type string `json:"type"`
 		Path string `json:"path"`
 	} `json:"icon"`
+}
+
+// 将路径中的 /Users/username 替换为 ~
+func tildePath(path string) string {
+	home, _ := os.UserHomeDir()
+	if home != "" && len(path) >= len(home) && path[:len(home)] == home {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 // 文件大小格式化
@@ -55,7 +65,8 @@ func BuildAlfredOutput(results []Result, maxRes int) string {
 	} else {
 		for _, r := range results {
 			item := AlfredItem{Uid: r.Path, Title: r.Name, Arg: r.Path, Valid: true}
-			parent := filepath.Dir(r.Path)
+			parent := tildePath(filepath.Dir(r.Path)) // ✅ 路径替换
+
 			if r.IsDir {
 				item.Subtitle = fmt.Sprintf("%s", parent)
 			} else {
