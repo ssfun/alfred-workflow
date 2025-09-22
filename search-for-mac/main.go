@@ -21,13 +21,16 @@ var polyphonic = map[rune][]string{}
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// fallback 最小字典
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
-			'长': {"chang", "zhang"},
-			'重': {"chong", "zhong"},
-			'乐': {"le", "yue"},
-			'处': {"chu", "cu"},
+	        '长': {"chang", "zhang"},
+	        '重': {"chong", "zhong"},
+	        '乐': {"le", "yue"},
+	        '处': {"chu", "cu"},
+	        '还': {"hai", "huan"},
+	        '藏': {"cang", "zang"},
+	        '假': {"jia", "jie"},
+	        '召': {"zhao", "shao"},
 		}
 		return
 	}
@@ -260,10 +263,10 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
-	debug := os.Getenv("DEBUG") == "1"
 	score := 0
+	debug := os.Getenv("DEBUG") == "1"
 
-	// 英文文件名 → 严格匹配
+	// 英文文件名
 	if isASCII(name) && !containsChinese(name) {
 		if nameLower == q {
 			return 500
@@ -277,29 +280,32 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		return 0
 	}
 
-	// 中文文件名 → 拼音
+	// 中文文件名
 	full, initials := pc.Get(name)
 
-	if looseMatch(q, full) {
-		if len(full) == len(q) {
-			score = max(score, 380)
-		} else {
-			score = max(score, 300)
-		}
+	// 优先级：全拼精确 > 首字母精确 > 全拼loose > 首字母loose > fuzzy
+	if q == full {
+		score = max(score, 400)
+	} else if looseMatch(q, full) {
+		score = max(score, 250)
 	}
-	if retryPolyphonicMatch(q, name, full) {
+
+	if q == initials {
+		score = max(score, 350)
+	} else if looseMatch(q, initials) {
 		score = max(score, 200)
 	}
-	if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
-		score = max(score, 150)
+
+	if retryPolyphonicMatch(q, name, full) {
+		score = max(score, 220)
 	}
-	// ✅ initials 必须保留
-	if looseMatch(q, initials) {
+
+	if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
 		score = max(score, 180)
 	}
 
 	if debug && score > 0 {
-		fmt.Printf("DEBUG: %s ←%s→ %d\n", name, q, score)
+		fmt.Fprintln(os.Stderr, "DEBUG:", name, "←", q, "→", score)
 	}
 	return score
 }
@@ -432,9 +438,9 @@ func main() {
 			item := AlfredItem{Uid: r.Path, Title: r.Name, Arg: r.Path, Valid: true}
 			parent := filepath.Dir(r.Path)
 			if r.IsDir {
-				item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
+				item.Subtitle = fmt.Sprintf("%s", parent)
 			} else {
-				item.Subtitle = fmt.Sprintf("📄 文件 | %s | %s | 修改: %s",
+				item.Subtitle = fmt.Sprintf("%s | %s | 修改: %s",
 					parent, formatSize(r.Size), r.ModTime.Format("2006-01-02 15:04"))
 			}
 			item.Icon.Type = "fileicon"
