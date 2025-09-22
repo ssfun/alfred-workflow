@@ -63,10 +63,29 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	}
 	pc.mu.RUnlock()
 
-	full := strings.Join(pinyin.LazyPinyin(name, a), "")
-	args := pinyin.NewArgs()
-	args.Style = pinyin.FirstLetter
-	initials := strings.Join(pinyin.LazyPinyin(name, args), "")
+	// 改：逐字生成，应用 polyphonic 字典
+	var fullParts []string
+	var initialParts []string
+
+	for _, r := range name {
+		// 如果是中文
+		if r >= 0x4e00 && r <= 0x9fff {
+			// 查多音字表
+			if alts, ok := polyphonic[r]; ok && len(alts) > 0 {
+				choose := alts[0] // 用表里的第一个作为默认
+				fullParts = append(fullParts, choose)
+				initialParts = append(initialParts, string(choose[0]))
+			} else {
+				py := pinyin.LazyPinyin(string(r), a)
+				if len(py) > 0 {
+					fullParts = append(fullParts, py[0])
+					initialParts = append(initialParts, string(py[0][0]))
+				}
+			}
+		}
+	}
+	full := strings.Join(fullParts, "")
+	initials := strings.Join(initialParts, "")
 
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{full, initials}
