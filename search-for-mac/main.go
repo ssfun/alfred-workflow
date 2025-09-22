@@ -261,53 +261,56 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 
 // ---------------- 打分 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
-	q := strings.ToLower(query)
-	nameLower := strings.ToLower(name)
-	score := 0
-	debug := os.Getenv("DEBUG") == "1"
+    q := strings.ToLower(query)
+    nameLower := strings.ToLower(name)
+    score := 0
+    debug := os.Getenv("DEBUG") == "1"
 
-	// 英文文件名
-	if isASCII(name) && !containsChinese(name) {
-		if nameLower == q {
-			return 500
-		}
-		if strings.HasPrefix(nameLower, q) {
-			return 450
-		}
-		if strings.Contains(nameLower, q) {
-			return 400
-		}
-		return 0
-	}
+    // 英文文件名：严格匹配
+    if isASCII(name) && !containsChinese(name) {
+        if nameLower == q {
+            return 500
+        }
+        if strings.HasPrefix(nameLower, q) {
+            return 450
+        }
+        if strings.Contains(nameLower, q) {
+            return 400
+        }
+        return 0
+    }
 
-	// 中文文件名
-	full, initials := pc.Get(name)
+    // 中文文件名
+    full, initials := pc.Get(name)
 
-	// 优先级：全拼精确 > 首字母精确 > 全拼loose > 首字母loose > fuzzy
-	if q == full {
-		score = max(score, 400)
-	} else if looseMatch(q, full) {
-		score = max(score, 250)
-	}
+    // ✅ 首字母精确匹配（最高优先级）
+    if q == initials {
+        score = max(score, 350)
+    } else if looseMatch(q, initials) {
+        score = max(score, 220)
+    }
 
-	if q == initials {
-		score = max(score, 350)
-	} else if looseMatch(q, initials) {
-		score = max(score, 200)
-	}
+    // 全拼逻辑
+    if q == full {
+        score = max(score, 300)
+    } else if looseMatch(q, full) {
+        score = max(score, 180) // 🚨 降低权重
+    }
 
-	if retryPolyphonicMatch(q, name, full) {
-		score = max(score, 220)
-	}
+    // 多音字
+    if retryPolyphonicMatch(q, name, full) {
+        score = max(score, 170)
+    }
 
-	if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
-		score = max(score, 180)
-	}
+    // 拼音模糊容错
+    if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
+        score = max(score, 160)
+    }
 
-	if debug && score > 0 {
-		fmt.Fprintln(os.Stderr, "DEBUG:", name, "←", q, "→", score)
-	}
-	return score
+    if debug && score > 0 {
+        fmt.Fprintln(os.Stderr, "DEBUG:", name, "←", q, "→", score)
+    }
+    return score
 }
 
 // ---------------- 文件大小 ----------------
