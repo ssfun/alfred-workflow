@@ -15,17 +15,40 @@ import (
 
 var a = pinyin.NewArgs()
 
-// ---------------- 常见多音字表 ----------------
-var polyphonic = map[rune][]string{
-	'行': {"hang", "xing"},
-	'长': {"chang", "zhang"},
-	'重': {"chong", "zhong"},
-	'乐': {"le", "yue"},
-	'处': {"chu", "cu"},
-	'还': {"hai", "huan"},
-	'藏': {"cang", "zang"},
-	'假': {"jia", "jie"},
-	'召': {"zhao", "shao"},
+// 全局多音字映射表
+var polyphonic = map[rune][]string{}
+
+// 加载 polyphonic.json 文件
+func loadPolyphonicDict(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Println("⚠️ 未找到 polyphonic.json，使用内置最小字典")
+		polyphonic = map[rune][]string{
+			'行': {"hang", "xing"},
+	        '长': {"chang", "zhang"},
+	        '重': {"chong", "zhong"},
+	        '乐': {"le", "yue"},
+	        '处': {"chu", "cu"},
+	        '还': {"hai", "huan"},
+	        '藏': {"cang", "zang"},
+	        '假': {"jia", "jie"},
+	        '召': {"zhao", "shao"},
+		}
+		return
+	}
+
+	tmp := make(map[string][]string)
+	if err := json.Unmarshal(data, &tmp); err != nil {
+		fmt.Println("⚠️ polyphonic.json 解析失败:", err)
+		return
+	}
+
+	for k, v := range tmp {
+		runes := []rune(k)
+		if len(runes) > 0 {
+			polyphonic[runes[0]] = v
+		}
+	}
 }
 
 // ---------------- 拼音缓存 ----------------
@@ -96,7 +119,7 @@ type Query struct {
 	FileType string
 }
 
-// 改进版 parseQuery，避免输入空格时 keywords 丢失
+// parseQuery —— 允许空格和后缀过滤器
 func parseQuery(raw string) Query {
 	tokens := strings.Fields(raw)
 	q := Query{}
@@ -104,16 +127,12 @@ func parseQuery(raw string) Query {
 		return q
 	}
 
-	// 第一个 token 始终作为关键字
 	q.Keywords = tokens[0]
-
-	// 如果最后一个 token 是过滤器，则识别 fileType
 	if len(tokens) > 1 {
 		last := strings.ToLower(tokens[len(tokens)-1])
 		if last == "dir" || last == "file" || strings.HasPrefix(last, ".") {
 			q.FileType = last
 		} else {
-			// 否则拼接多个 token 作为 keywords
 			q.Keywords = strings.Join(tokens, " ")
 		}
 	}
@@ -124,7 +143,6 @@ func parseQuery(raw string) Query {
 func getConfig() ([]string, []string, int, int) {
 	homeDir, _ := os.UserHomeDir()
 
-	// 搜索目录
 	dirEnv := os.Getenv("SEARCH_DIRS")
 	var dirs []string
 	if dirEnv != "" {
@@ -135,7 +153,6 @@ func getConfig() ([]string, []string, int, int) {
 		dirs = []string{"Documents", "Desktop", "Downloads"}
 	}
 
-	// 忽略目录
 	exclEnv := os.Getenv("EXCLUDES")
 	var excl []string
 	if exclEnv != "" {
@@ -146,19 +163,16 @@ func getConfig() ([]string, []string, int, int) {
 		excl = []string{".git", "__pycache__", "node_modules", ".DS_Store"}
 	}
 
-	// 最大结果数
 	maxRes := 100
 	if os.Getenv("MAX_RESULTS") != "" {
 		fmt.Sscanf(os.Getenv("MAX_RESULTS"), "%d", &maxRes)
 	}
 
-	// 最大扫描深度
-	maxDepth := -1 // -1 表示无限制
+	maxDepth := -1
 	if os.Getenv("MAX_DEPTH") != "" {
 		fmt.Sscanf(os.Getenv("MAX_DEPTH"), "%d", &maxDepth)
 	}
 
-	// 白名单完整路径
 	var wl []string
 	for _, d := range dirs {
 		full := filepath.Join(homeDir, d)
@@ -166,11 +180,10 @@ func getConfig() ([]string, []string, int, int) {
 			wl = append(wl, full)
 		}
 	}
-
 	return wl, excl, maxRes, maxDepth
 }
 
-// ---------------- 匹配算法 ----------------
+// ---------------- 匹配逻辑 ----------------
 func looseMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -182,12 +195,8 @@ func looseMatch(query, target string) bool {
 	return i == len(query)
 }
 
-// 允许 1 个字符拼音错误的模糊匹配
 func fuzzyMatchAllowOneError(query, target string) bool {
 	m, n := len(query), len(target)
-	if m == 0 {
-		return true
-	}
 	if abs(m-n) > 1 {
 		return false
 	}
@@ -231,33 +240,21 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	nameLower := strings.ToLower(name)
 	scores := []int{}
 
-	// 文件名直配
 	if looseMatch(q, nameLower) {
-		pos := strings.Index(nameLower, q)
-		if nameLower == q {
-			scores = append(scores, 500)
-		} else if pos == 0 {
-			scores = append(scores, 400)
-		} else {
-			scores = append(scores, 300-pos-abs(len(name)-len(q)))
-		}
+		scores = append(scores, 300)
 	}
 
-	// 拼音匹配
 	full, initials := pc.Get(name)
-
 	if looseMatch(q, full) {
-		scores = append(scores, 200-abs(len(full)-len(q)))
-	} else {
-		if retryPolyphonicMatch(q, name, full) {
-			scores = append(scores, 170) // 多音字重试
-		} else if fuzzyMatchAllowOneError(q, full) {
-			scores = append(scores, 140) // 模糊拼音匹配，权重最低
-		}
+		scores = append(scores, 200)
+	} else if retryPolyphonicMatch(q, name, full) {
+		scores = append(scores, 170)
+	} else if fuzzyMatchAllowOneError(q, full) {
+		scores = append(scores, 140)
 	}
 
 	if looseMatch(q, initials) {
-		scores = append(scores, 150-abs(len(initials)-len(q)))
+		scores = append(scores, 150)
 	}
 
 	max := 0
@@ -301,7 +298,6 @@ func searchDir(base string, baseDepth int, query Query, pc *PinyinCache, exclude
 		if err != nil {
 			return nil
 		}
-		// 深度限制
 		if maxDepth > -1 {
 			curDepth := strings.Count(path, string(os.PathSeparator)) - baseDepth
 			if curDepth > maxDepth {
@@ -320,7 +316,6 @@ func searchDir(base string, baseDepth int, query Query, pc *PinyinCache, exclude
 		if !typeFilter(path, d.IsDir(), query.FileType) {
 			return nil
 		}
-
 		score := matchScore(query.Keywords, name, pc)
 		if score > 0 {
 			info, _ := os.Stat(path)
@@ -350,14 +345,14 @@ type AlfredItem struct {
 	} `json:"icon"`
 }
 
-// ---------------- 主函数 ----------------
 func main() {
+	loadPolyphonicDict("polyphonic.json")
+
 	if len(os.Args) < 2 {
 		fmt.Println(`{"items": []}`)
 		return
 	}
-	rawQuery := os.Args[1]
-	query := parseQuery(rawQuery)
+	query := parseQuery(os.Args[1])
 
 	whitelistDirs, excludesList, maxRes, maxDepth := getConfig()
 	excludesMap := make(map[string]bool)
@@ -368,13 +363,11 @@ func main() {
 	pc := NewPinyinCache()
 	resultChan := make(chan Result, 2000)
 	var wg sync.WaitGroup
-
 	for _, d := range whitelistDirs {
 		wg.Add(1)
 		baseDepth := strings.Count(d, string(os.PathSeparator))
 		go searchDir(d, baseDepth, query, pc, excludesMap, maxDepth, resultChan, &wg)
 	}
-
 	go func() {
 		wg.Wait()
 		close(resultChan)
@@ -389,7 +382,6 @@ func main() {
 		}
 	}
 
-	// 排序
 	sort.Slice(results, func(i, j int) bool {
 		si, sj := results[i].Score, results[j].Score
 		if results[i].ModTime.After(time.Now().AddDate(0, 0, -30)) {
@@ -409,7 +401,6 @@ func main() {
 		item := AlfredItem{
 			Title:    "没有找到匹配结果",
 			Subtitle: "请尝试调整关键词或目录设置",
-			Arg:      "",
 			Valid:    false,
 		}
 		item.Icon.Type = "icon"
@@ -425,9 +416,9 @@ func main() {
 			}
 			parent := filepath.Dir(r.Path)
 			if r.IsDir {
-				item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
+				item.Subtitle = fmt.Sprintf("%s", parent)
 			} else {
-				item.Subtitle = fmt.Sprintf("📄 文件 | %s | %.1fKB | 修改: %s",
+				item.Subtitle = fmt.Sprintf("%s | %.1fKB | 修改: %s",
 					parent, float64(r.Size)/1024,
 					r.ModTime.Format("2006-01-02 15:04"))
 			}
@@ -436,7 +427,6 @@ func main() {
 			items = append(items, item)
 		}
 	}
-
 	data, _ := json.Marshal(map[string]interface{}{"items": items})
 	fmt.Println(string(data))
 }
