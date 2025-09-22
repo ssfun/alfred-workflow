@@ -6,12 +6,71 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mozillazg/go-pinyin"
 )
+
+// ---------------- 配置 ----------------
+type Config struct {
+	SearchDirs      []string
+	Excludes        []string
+	MaxResults      int
+	MaxDepth        int
+	MaxCombinations int
+	EnableFuzzy     bool
+}
+
+func loadConfig() Config {
+	homeDir, _ := os.UserHomeDir()
+	cfg := Config{
+		SearchDirs:      []string{"Documents", "Desktop", "Downloads"},
+		Excludes:        []string{".git", "node_modules", "__pycache__", ".DS_Store"},
+		MaxResults:      100,
+		MaxDepth:        3,
+		MaxCombinations: 10,
+		EnableFuzzy:     true,
+	}
+
+	if v := os.Getenv("SEARCH_DIRS"); v != "" {
+		cfg.SearchDirs = strings.Split(v, ",")
+	}
+	if v := os.Getenv("EXCLUDES"); v != "" {
+		cfg.Excludes = strings.Split(v, ",")
+	}
+	if v := os.Getenv("MAX_RESULTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.MaxResults = n
+		}
+	}
+	if v := os.Getenv("MAX_DEPTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.MaxDepth = n
+		}
+	}
+	if v := os.Getenv("MAX_COMBINATIONS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.MaxCombinations = n
+		}
+	}
+	if v := os.Getenv("ENABLE_FUZZY"); v != "" {
+		cfg.EnableFuzzy = (strings.ToLower(v) == "true" || v == "1")
+	}
+
+	// 转换为绝对目录
+	absDirs := []string{}
+	for _, d := range cfg.SearchDirs {
+		full := filepath.Join(homeDir, strings.TrimSpace(d))
+		if st, err := os.Stat(full); err == nil && st.IsDir() {
+			absDirs = append(absDirs, full)
+		}
+	}
+	cfg.SearchDirs = absDirs
+	return cfg
+}
 
 // ---------------- 拼音缓存（支持多音字） ----------------
 type PinyinCache struct {
@@ -23,7 +82,7 @@ func NewPinyinCache() *PinyinCache {
 	return &PinyinCache{cache: make(map[string][2]string)}
 }
 
-func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
+func (pc *PinyinCache) GetAll(name string, maxComb int) ([]string, []string) {
 	pc.mu.RLock()
 	if val, ok := pc.cache[name]; ok {
 		pc.mu.RUnlock()
@@ -35,14 +94,14 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	args1 := pinyin.NewArgs()
 	args1.Heteronym = true
 	pyMatrix := pinyin.Pinyin(name, args1)
-	fullList := combinePinyin(pyMatrix)
+	fullList := combineLimited(pyMatrix, maxComb)
 
 	// 首字母矩阵（启用多音字）
 	args2 := pinyin.NewArgs()
 	args2.Style = pinyin.FirstLetter
 	args2.Heteronym = true
 	pyMatrix2 := pinyin.Pinyin(name, args2)
-	initList := combinePinyin(pyMatrix2)
+	initList := combineLimited(pyMatrix2, maxComb)
 
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{
@@ -50,71 +109,34 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 		strings.Join(initList, ","),
 	}
 	pc.mu.Unlock()
-
 	return fullList, initList
 }
 
-// 展开多音字组合 [["yin"], ["hang","xing"], ["xin"], ["xi"]]
-func combinePinyin(matrix [][]string) []string {
+// 限制组合数量，避免爆炸
+func combineLimited(matrix [][]string, maxComb int) []string {
 	results := []string{""}
 	for _, choices := range matrix {
+		if len(choices) > 2 {
+			choices = choices[:2] // 每个字最多取2个拼音
+		}
 		var newResults []string
 		for _, base := range results {
 			for _, p := range choices {
 				newResults = append(newResults, base+p)
+				if len(newResults) > maxComb {
+					return newResults[:maxComb]
+				}
 			}
 		}
 		results = newResults
 	}
+	if len(results) > maxComb {
+		return results[:maxComb]
+	}
 	return results
 }
 
-// ---------------- 配置读取 ----------------
-func getConfig() ([]string, []string, int) {
-	homeDir, _ := os.UserHomeDir()
-
-	// 搜索目录
-	dirEnv := os.Getenv("SEARCH_DIRS")
-	var dirs []string
-	if dirEnv != "" {
-		for _, d := range strings.Split(dirEnv, ",") {
-			dirs = append(dirs, strings.TrimSpace(d))
-		}
-	} else {
-		dirs = []string{"Documents", "Desktop", "Downloads"}
-	}
-
-	// 忽略目录
-	exclEnv := os.Getenv("EXCLUDES")
-	var excl []string
-	if exclEnv != "" {
-		for _, e := range strings.Split(exclEnv, ",") {
-			excl = append(excl, strings.TrimSpace(e))
-		}
-	} else {
-		excl = []string{".git", "__pycache__", "node_modules", ".DS_Store"}
-	}
-
-	// 最大结果数
-	maxRes := 100
-	if os.Getenv("MAX_RESULTS") != "" {
-		fmt.Sscanf(os.Getenv("MAX_RESULTS"), "%d", &maxRes)
-	}
-
-	// 白名单完整路径
-	var wl []string
-	for _, d := range dirs {
-		full := filepath.Join(homeDir, d)
-		if st, err := os.Stat(full); err == nil && st.IsDir() {
-			wl = append(wl, full)
-		}
-	}
-
-	return wl, excl, maxRes
-}
-
 // ---------------- 匹配逻辑 ----------------
-
 func fuzzyMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -126,7 +148,7 @@ func fuzzyMatch(query, target string) bool {
 	return i == len(query)
 }
 
-// 编辑距离 (Levenshtein Distance)
+// 编辑距离
 func editDistance(s1, s2 string) int {
 	r1, r2 := []rune(s1), []rune(s2)
 	len1, len2 := len(r1), len(r2)
@@ -146,50 +168,70 @@ func editDistance(s1, s2 string) int {
 			if r1[i-1] != r2[j-1] {
 				cost = 1
 			}
-			dp[i][j] = min(dp[i-1][j]+1, min(dp[i][j-1]+1, dp[i-1][j-1]+cost))
+			if dp[i-1][j]+1 < dp[i][j-1]+1 {
+				if dp[i-1][j]+1 < dp[i-1][j-1]+cost {
+					dp[i][j] = dp[i-1][j] + 1
+				} else {
+					dp[i][j] = dp[i-1][j-1] + cost
+				}
+			} else {
+				if dp[i][j-1]+1 < dp[i-1][j-1]+cost {
+					dp[i][j] = dp[i][j-1] + 1
+				} else {
+					dp[i][j] = dp[i-1][j-1] + cost
+				}
+			}
 		}
 	}
 	return dp[len1][len2]
 }
 
-func matchScore(query, name string, pc *PinyinCache) int {
+func approxMatch(query string, candidates []string, maxDist int) bool {
+	for i, cand := range candidates {
+		if i >= 3 { // 最多检查3个候选，避免性能问题
+			return false
+		}
+		if editDistance(query, cand) <= maxDist {
+			return true
+		}
+	}
+	return false
+}
+
+func matchScore(query, name string, pc *PinyinCache, cfg Config) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 	scores := []int{}
 
-	// 文件名直配
+	// 文件名直匹配
 	if fuzzyMatch(q, nameLower) {
 		scores = append(scores, 500)
 	}
 
-	// 拼音匹配（支持多音字+容错）
-	fullList, initList := pc.GetAll(name)
+	// 拼音匹配（多音字+首字母）
+	fullList, initList := pc.GetAll(name, cfg.MaxCombinations)
 
-	// 精确匹配
+	exactHit := false
 	for _, full := range fullList {
 		if fuzzyMatch(q, full) {
 			scores = append(scores, 200)
+			exactHit = true
 		}
 	}
 	for _, initials := range initList {
 		if fuzzyMatch(q, initials) {
 			scores = append(scores, 180)
+			exactHit = true
 		}
 	}
 
-	// 容错匹配（仅在未命中时触发，性能优化）
-	if len(scores) == 0 {
-		for _, full := range fullList {
-			if editDistance(q, full) <= 2 { // 全拼容错
-				scores = append(scores, 120)
-				break
-			}
+	// 容错
+	if cfg.EnableFuzzy && !exactHit && len(q) <= 15 {
+		if approxMatch(q, fullList, 2) {
+			scores = append(scores, 120)
 		}
-		for _, initials := range initList {
-			if editDistance(q, initials) <= 1 { // 首字母容错
-				scores = append(scores, 100)
-				break
-			}
+		if approxMatch(q, initList, 1) {
+			scores = append(scores, 100)
 		}
 	}
 
@@ -212,11 +254,17 @@ type Result struct {
 	Size    int64
 }
 
-func searchDir(base string, query string, pc *PinyinCache, excludes map[string]bool, wg *sync.WaitGroup, resultChan chan<- Result) {
+func searchDir(base string, depthLimit int, query string, pc *PinyinCache, excludes map[string]bool, wg *sync.WaitGroup, resultChan chan<- Result, cfg Config) {
 	defer wg.Done()
 	filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
+		}
+		// 限制深度
+		if strings.Count(strings.TrimPrefix(path, base), string(os.PathSeparator)) > depthLimit {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 		}
 		name := d.Name()
 		if strings.HasPrefix(name, ".") || excludes[name] {
@@ -225,7 +273,8 @@ func searchDir(base string, query string, pc *PinyinCache, excludes map[string]b
 			}
 			return nil
 		}
-		score := matchScore(query, name, pc)
+
+		score := matchScore(query, name, pc, cfg)
 		if score > 0 {
 			info, _ := os.Stat(path)
 			resultChan <- Result{
@@ -253,16 +302,17 @@ type AlfredItem struct {
 	} `json:"icon"`
 }
 
+// ---------------- 主函数 ----------------
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println(`{"items": []}`)
 		return
 	}
 	query := os.Args[1]
+	cfg := loadConfig()
 
-	whitelistDirs, excludesList, maxRes := getConfig()
 	excludesMap := make(map[string]bool)
-	for _, e := range excludesList {
+	for _, e := range cfg.Excludes {
 		excludesMap[e] = true
 	}
 
@@ -270,9 +320,9 @@ func main() {
 	resultChan := make(chan Result, 1000)
 	var wg sync.WaitGroup
 
-	for _, d := range whitelistDirs {
+	for _, d := range cfg.SearchDirs {
 		wg.Add(1)
-		go searchDir(d, query, pc, excludesMap, &wg, resultChan)
+		go searchDir(d, cfg.MaxDepth, query, pc, excludesMap, &wg, resultChan, cfg)
 	}
 
 	go func() {
@@ -295,8 +345,8 @@ func main() {
 		return results[i].Score > results[j].Score
 	})
 
-	if len(results) > maxRes {
-		results = results[:maxRes]
+	if len(results) > cfg.MaxResults {
+		results = results[:cfg.MaxResults]
 	}
 
 	items := []AlfredItem{}
@@ -321,12 +371,4 @@ func main() {
 
 	data, _ := json.Marshal(map[string]interface{}{"items": items})
 	fmt.Println(string(data))
-}
-
-// ---------------- 工具函数 ----------------
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
