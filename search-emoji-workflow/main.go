@@ -76,7 +76,7 @@ func main() {
 	}
 
 	// 加载 Apple Color Emoji 字体
-	fontBytes, err := ioutil.ReadFile("/System/Library/Fonts/Supplemental/Apple Color Emoji.ttc")
+	fontBytes, err := ioutil.ReadFile("/System/Library/Fonts/Apple Color Emoji.ttc")
 	if err != nil {
 		fmt.Printf(`{"items":[{"title":"错误","subtitle":"无法读取系统字体","valid":false}]}`)
 		return
