@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,9 +29,9 @@ type Item struct {
 	Icon     Icon   `json:"icon"`
 }
 
-const maxRecent = 30
+const maxRecent = 8
 
-// === Utility ===
+// --- recent.json 管理 ---
 func getRecentFile(baseDir string) string {
 	return filepath.Join(baseDir, "recent.json")
 }
@@ -58,114 +56,7 @@ func saveRecent(file string, recent []string) {
 	_ = os.WriteFile(file, data, 0644)
 }
 
-// === 命名规则转换 ===
-// 本地文件名规则 eg: 1f469-1f3fc-200d-1f9b2.png
-func codesToLocalFilename(codes string) string {
-	parts := strings.Split(codes, " ")
-	for i, p := range parts {
-		parts[i] = strings.ToLower(p)
-	}
-	return strings.Join(parts, "-") + ".png"
-}
-
-// Noto Emoji 官方远程命名 eg: emoji_u1f469_1f3fc_200d_1f9b2.png
-func codesToNotoFilename(codes string) string {
-	parts := strings.Split(codes, " ")
-	for i, p := range parts {
-		parts[i] = strings.ToLower(p)
-	}
-	return "emoji_u" + strings.Join(parts, "_") + ".png"
-}
-
-// 下载文件
-func downloadFile(url, targetPath string, overwrite bool) error {
-	if !overwrite {
-		if _, err := os.Stat(targetPath); err == nil {
-			return nil // 已存在，且无需覆盖
-		}
-	}
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("http %s", resp.Status)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-		return err
-	}
-
-	out, err := os.Create(targetPath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
-
-// === 命令实现 ===
-// 下载 PNG icon
-func downloadIcons(baseDir string, mode string) {
-	dataFile := filepath.Join(baseDir, "emoji.json")
-	iconDir := filepath.Join(baseDir, "icons")
-
-	data, err := os.ReadFile(dataFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取 emoji.json 出错: %v\n", err)
-		os.Exit(1)
-	}
-	var emojis []Emoji
-	if err := json.Unmarshal(data, &emojis); err != nil {
-		fmt.Fprintf(os.Stderr, "解析 emoji.json 出错: %v\n", err)
-		os.Exit(1)
-	}
-
-	overwrite := (mode == "overwrite")
-	count := 0
-	for _, e := range emojis {
-		localName := codesToLocalFilename(e.Codes)
-		notoName := codesToNotoFilename(e.Codes)
-		target := filepath.Join(iconDir, localName)
-		url := fmt.Sprintf("https://raw.githubusercontent.com/googlefonts/noto-emoji/main/png/128/%s", notoName)
-
-		err := downloadFile(url, target, overwrite)
-		if err == nil {
-			count++
-			fmt.Printf("✅ %s\n", localName)
-		} else {
-			fmt.Printf("⚠️  跳过 %s (%v)\n", localName, err)
-		}
-	}
-	fmt.Printf("\n完成: 共下载 %d 个 emoji 图标\n", count)
-}
-
-// 更新 emoji.json
-func updateEmojiJSON(baseDir string) {
-	target := filepath.Join(baseDir, "emoji.json")
-	url := "https://raw.githubusercontent.com/amio/emoji.json/master/emoji.json"
-
-	resp, err := http.Get(url)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "下载 emoji.json 出错: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "下载失败: %s\n", resp.Status)
-		os.Exit(1)
-	}
-	data, _ := io.ReadAll(resp.Body)
-	_ = os.WriteFile(target, data, 0644)
-
-	fmt.Printf("✅ 已更新 emoji.json (%d 字节)\n", len(data))
-}
-
-// === Script Filter 查询 ===
+// --- 查询逻辑 ---
 func queryEmoji(baseDir, query string) {
 	dataFile := filepath.Join(baseDir, "emoji.json")
 	iconDir := filepath.Join(baseDir, "icons")
@@ -185,7 +76,7 @@ func queryEmoji(baseDir, query string) {
 	recent := loadRecent(recentFile)
 	var results []Item
 
-	// 最近使用（仅 query 为空时展示）
+	// 最近使用
 	if query == "" {
 		for _, rc := range recent {
 			code := fmt.Sprintf("%x", []rune(rc)[0])
@@ -204,22 +95,23 @@ func queryEmoji(baseDir, query string) {
 		}
 	}
 
+	// emoji 总表
 	for _, e := range emojis {
 		emojiChar := e.Char
-		searchText := strings.ToLower(e.Name + " " + e.Category + " " + e.Group + " " + e.Subgroup + " " + e.Char)
+		searchText := strings.ToLower(
+			e.Name + " " + e.Category + " " + e.Group + " " + e.Subgroup + " " + e.Char,
+		)
 
 		if strings.HasPrefix(query, ":") {
 			category := strings.TrimPrefix(query, ":")
 			if !strings.Contains(strings.ToLower(e.Category), category) {
 				continue
 			}
-		} else {
-			if query != "" && !strings.Contains(searchText, query) {
-				continue
-			}
+		} else if query != "" && !strings.Contains(searchText, query) {
+			continue
 		}
 
-		localName := codesToLocalFilename(e.Codes)
+		localName := codesToLocalFilename(e.Codes) // ✅ 从 utils.go 调用
 		iconPath := filepath.Join(iconDir, localName)
 		if _, err := os.Stat(iconPath); os.IsNotExist(err) {
 			continue
@@ -246,19 +138,12 @@ func queryEmoji(baseDir, query string) {
 	fmt.Println(string(output))
 }
 
-// === main ===
+// --- Main ---
 func main() {
 	baseDir, _ := os.Getwd()
 	recentFile := getRecentFile(baseDir)
 
-	if len(os.Args) > 2 && os.Args[1] == "--download" {
-		downloadIcons(baseDir, os.Args[2])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "--update-json" {
-		updateEmojiJSON(baseDir)
-		return
-	}
+	// 更新最近使用
 	if len(os.Args) > 2 && os.Args[1] == "--recent" {
 		emojiChar := os.Args[2]
 		recent := loadRecent(recentFile)
@@ -272,6 +157,13 @@ func main() {
 		return
 	}
 
+	// 工具模式
+	if len(os.Args) > 1 && os.Args[1] == "utils" {
+		runUtils(baseDir, os.Args[2:])
+		return
+	}
+
+	// 查询模式
 	query := ""
 	if len(os.Args) > 1 {
 		query = strings.ToLower(strings.Join(os.Args[1:], " "))
