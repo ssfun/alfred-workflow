@@ -283,7 +283,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
     score := 0
     debug := os.Getenv("DEBUG") == "1"
 
-    // -------- 英文文件 --------
+    // 英文文件
     if isASCII(name) && !containsChinese(name) {
         if nameLower == q {
             return 500
@@ -297,7 +297,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
         return 0
     }
 
-    // -------- 中文文件 --------
+    // 中文文件
     full, initials := pc.Get(name)
 
     // 1. 首字母
@@ -312,19 +312,19 @@ func matchScore(query, name string, pc *PinyinCache) int {
         score = max(score, 350)
     }
 
-    // 3. 多音字
-    if retryPolyphonicMatch(q, name, full) {
-        score = max(score, 120)
+    // 3. 多音字（仅在 query 长度较短时尝试）
+    if len(q) <= 6 && abs(len(q)-len(full)) <= 2 && retryPolyphonicMatch(q, name, full) {
+        score = max(score, 180)
     }
 
-    // 4. Fuzzy
-    if len(q) >= 3 && abs(len(q)-len(full)) <= 1 && fuzzyMatchAllowOneError(q, full) {
-        score = max(score, 100)
+    // 4. Fuzzy 容错（严格收紧）
+    if len(q) >= 4 && abs(len(q)-len(full)) <= 1 && fuzzyMatchAllowOneError(q, full) {
+        score = max(score, 80)
     }
 
     if debug && score > 0 {
-        fmt.Fprintln(os.Stderr,
-            "DEBUG:", name, "→ q:", q, "full:", full, "initials:", initials, "score:", score)
+        fmt.Fprintln(os.Stderr, "DEBUG:", name,
+            "→ q:", q, "full:", full, "initials:", initials, "score:", score)
     }
     return score
 }
