@@ -13,33 +13,8 @@ import (
 )
 
 // ---------------- CONFIG ----------------
-var (
-	homeDir, _    = os.UserHomeDir()
-	whitelistDirs = []string{
-		"Documents",
-		"Desktop",
-		"Downloads",
-		"Library/CloudStorage/Dropbox",
-	}
 
-	excludes = map[string]bool{
-		".git":        true,
-		"__pycache__": true,
-		"node_modules": true,
-		".DS_Store":   true,
-		"venv":   true,
-		"build":   true,
-		"dist":   true,
-		"logs":   true,
-		"tmp":   true,
-		".idea":   true,
-		".vscode":   true,
-	}
-
-	maxResults = 100
-)
-
-// ---------------- 拼音缓存 ----------------
+// 拼音缓存
 var a = pinyin.NewArgs()
 
 type PinyinCache struct {
@@ -67,11 +42,76 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{full, initials}
 	pc.mu.Unlock()
-
 	return full, initials
 }
 
-// ---------------- 匹配评分 ----------------
+// ---------------- 查询解析 ----------------
+type Query struct {
+	Keywords string
+	FileType string // "dir" / "file" / ".ext"
+}
+
+func parseQuery(raw string) Query {
+	tokens := strings.Fields(raw)
+	q := Query{}
+	keywords := []string{}
+	for _, t := range tokens {
+		low := strings.ToLower(t)
+		if low == "dir" || low == "file" || strings.HasPrefix(low, ".") {
+			q.FileType = low
+		} else {
+			keywords = append(keywords, t)
+		}
+	}
+	q.Keywords = strings.Join(keywords, " ")
+	return q
+}
+
+// ---------------- 配置读取（环境变量） ----------------
+func getConfig() ([]string, []string, int) {
+	homeDir, _ := os.UserHomeDir()
+
+	// 搜索目录
+	dirEnv := os.Getenv("SEARCH_DIRS")
+	var dirs []string
+	if dirEnv != "" {
+		for _, d := range strings.Split(dirEnv, ",") {
+			dirs = append(dirs, strings.TrimSpace(d))
+		}
+	} else {
+		dirs = []string{"Documents", "Desktop", "Downloads"}
+	}
+
+	// 忽略目录
+	exclEnv := os.Getenv("EXCLUDES")
+	var excl []string
+	if exclEnv != "" {
+		for _, e := range strings.Split(exclEnv, ",") {
+			excl = append(excl, strings.TrimSpace(e))
+		}
+	} else {
+		excl = []string{".git", "__pycache__", "node_modules", ".DS_Store"}
+	}
+
+	// 最大结果数
+	maxRes := 100
+	if os.Getenv("MAX_RESULTS") != "" {
+		fmt.Sscanf(os.Getenv("MAX_RESULTS"), "%d", &maxRes)
+	}
+
+	// 白名单完整路径
+	var wl []string
+	for _, d := range dirs {
+		full := filepath.Join(homeDir, d)
+		if st, err := os.Stat(full); err == nil && st.IsDir() {
+			wl = append(wl, full)
+		}
+	}
+
+	return wl, excl, maxRes
+}
+
+// ---------------- 匹配算法 ----------------
 func fuzzyMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -88,24 +128,28 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	nameLower := strings.ToLower(name)
 	scores := []int{}
 
+	// 文件名直配优先 - 完全匹配 / 前缀匹配加权
 	if fuzzyMatch(q, nameLower) {
 		pos := strings.Index(nameLower, q)
-		posScore := 50
-		if pos >= 0 {
-			posScore = pos
+		if nameLower == q {
+			scores = append(scores, 500)
+		} else if pos == 0 {
+			scores = append(scores, 400)
+		} else {
+			scores = append(scores, 300-pos-abs(len(name)-len(q)))
 		}
-		scores = append(scores, 300-posScore-abs(len(name)-len(q)))
 	}
 
+	// 拼音全拼 + 首字母
 	full, initials := pc.Get(name)
-
 	if fuzzyMatch(q, full) {
 		scores = append(scores, 200-abs(len(full)-len(q)))
 	}
 	if fuzzyMatch(q, initials) {
-		scores = append(scores, 100-abs(len(initials)-len(q)))
+		scores = append(scores, 150-abs(len(initials)-len(q)))
 	}
 
+	// 返回最大分
 	max := 0
 	for _, s := range scores {
 		if s > max {
@@ -123,7 +167,23 @@ type Result struct {
 	IsDir bool
 }
 
-func searchDir(base string, query string, pc *PinyinCache, wg *sync.WaitGroup, resultChan chan<- Result) {
+func typeFilter(path string, isDir bool, fileType string) bool {
+	if fileType == "" {
+		return true
+	}
+	if fileType == "dir" {
+		return isDir
+	}
+	if fileType == "file" {
+		return !isDir
+	}
+	if strings.HasPrefix(fileType, ".") {
+		return strings.HasSuffix(strings.ToLower(path), fileType)
+	}
+	return true
+}
+
+func searchDir(base string, query Query, pc *PinyinCache, excludes map[string]bool, wg *sync.WaitGroup, resultChan chan<- Result) {
 	defer wg.Done()
 	filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -136,7 +196,10 @@ func searchDir(base string, query string, pc *PinyinCache, wg *sync.WaitGroup, r
 			}
 			return nil
 		}
-		score := matchScore(query, name, pc)
+		if !typeFilter(path, d.IsDir(), query.FileType) {
+			return nil
+		}
+		score := matchScore(query.Keywords, name, pc)
 		if score > 0 {
 			resultChan <- Result{
 				Score: score,
@@ -166,19 +229,22 @@ func main() {
 		fmt.Println(`{"items": []}`)
 		return
 	}
-	query := os.Args[1]
-	pc := NewPinyinCache()
+	rawQuery := os.Args[1]
+	query := parseQuery(rawQuery)
 
+	whitelistDirs, excludesList, maxRes := getConfig()
+	excludesMap := make(map[string]bool)
+	for _, e := range excludesList {
+		excludesMap[e] = true
+	}
+
+	pc := NewPinyinCache()
 	resultChan := make(chan Result, 1000)
 	var wg sync.WaitGroup
 
-	// 并发扫描多个白名单目录
 	for _, d := range whitelistDirs {
-		fullPath := filepath.Join(homeDir, d)
-		if stat, err := os.Stat(fullPath); err == nil && stat.IsDir() {
-			wg.Add(1)
-			go searchDir(fullPath, query, pc, &wg, resultChan)
-		}
+		wg.Add(1)
+		go searchDir(d, query, pc, excludesMap, &wg, resultChan)
 	}
 
 	go func() {
@@ -191,13 +257,43 @@ func main() {
 		results = append(results, r)
 	}
 
-	// 排序（分数降序）
+	// 排序 + 权重优化
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
+		si, sj := results[i].Score, results[j].Score
+
+		// 文件夹/文件优先权重
+		if query.FileType == "dir" {
+			if results[i].IsDir && !results[j].IsDir {
+				return true
+			}
+			if !results[i].IsDir && results[j].IsDir {
+				return false
+			}
+		}
+		if query.FileType == "file" {
+			if !results[i].IsDir && results[j].IsDir {
+				return true
+			}
+			if results[i].IsDir && !results[j].IsDir {
+				return false
+			}
+		}
+
+		// 扩展名筛选权重
+		if strings.HasPrefix(query.FileType, ".") {
+			iMatch := strings.HasSuffix(strings.ToLower(results[i].Path), query.FileType)
+			jMatch := strings.HasSuffix(strings.ToLower(results[j].Path), query.FileType)
+			if iMatch != jMatch {
+				return iMatch
+			}
+		}
+
+		// 默认分数优先
+		return si > sj
 	})
 
-	if len(results) > maxResults {
-		results = results[:maxResults]
+	if len(results) > maxRes {
+		results = results[:maxRes]
 	}
 
 	items := []AlfredItem{}
@@ -217,7 +313,7 @@ func main() {
 	fmt.Println(string(data))
 }
 
-// ---------------- 工具 ----------------
+// ---------------- 工具函数 ----------------
 func abs(x int) int {
 	if x < 0 {
 		return -x
