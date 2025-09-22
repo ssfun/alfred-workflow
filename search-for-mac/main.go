@@ -15,6 +15,19 @@ import (
 
 var a = pinyin.NewArgs()
 
+// ---------------- 常见多音字表 ----------------
+var polyphonic = map[rune][]string{
+	'行': {"hang", "xing"},
+	'长': {"chang", "zhang"},
+	'重': {"chong", "zhong"},
+	'乐': {"le", "yue"},
+	'处': {"chu", "cu"},
+	'还': {"hai", "huan"},
+	'藏': {"cang", "zang"},
+	'假': {"jia", "jie"},
+	'召': {"zhao", "shao"},
+}
+
 // ---------------- 拼音缓存 ----------------
 type PinyinCache struct {
 	mu    sync.RWMutex
@@ -43,6 +56,38 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.Unlock()
 
 	return full, initials
+}
+
+// ---------------- 多音字重试逻辑 ----------------
+func retryPolyphonicMatch(query string, name string, full string) bool {
+	runes := []rune(name)
+	for i, r := range runes {
+		if alts, ok := polyphonic[r]; ok {
+			for _, alt := range alts {
+				altFull := rebuildPinyin(runes, i, alt)
+				if looseMatch(query, altFull) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func rebuildPinyin(runes []rune, idx int, alt string) string {
+	args := pinyin.NewArgs()
+	parts := []string{}
+	for i, r := range runes {
+		if i == idx {
+			parts = append(parts, alt)
+		} else {
+			py := pinyin.LazyPinyin(string(r), args)
+			if len(py) > 0 {
+				parts = append(parts, py[0])
+			}
+		}
+	}
+	return strings.Join(parts, "")
 }
 
 // ---------------- 查询解析 ----------------
@@ -105,7 +150,7 @@ func getConfig() ([]string, []string, int, int, int) {
 		fmt.Sscanf(os.Getenv("MAX_DEPTH"), "%d", &maxDepth)
 	}
 
-	// worker 数量
+	// 默认 worker 数
 	workers := 8
 	if os.Getenv("WORKERS") != "" {
 		fmt.Sscanf(os.Getenv("WORKERS"), "%d", &workers)
@@ -140,6 +185,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	nameLower := strings.ToLower(name)
 	scores := []int{}
 
+	// 文件名直配
 	if looseMatch(q, nameLower) {
 		pos := strings.Index(nameLower, q)
 		if nameLower == q {
@@ -151,14 +197,22 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		}
 	}
 
+	// 拼音
 	full, initials := pc.Get(name)
+
 	if looseMatch(q, full) {
 		scores = append(scores, 200-abs(len(full)-len(q)))
+	} else {
+		if retryPolyphonicMatch(q, name, full) {
+			scores = append(scores, 170) // 多音字重试，权重次之
+		}
 	}
+
 	if looseMatch(q, initials) {
 		scores = append(scores, 150-abs(len(initials)-len(q)))
 	}
 
+	// 返回最高分
 	max := 0
 	for _, s := range scores {
 		if s > max {
@@ -168,7 +222,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	return max
 }
 
-// ---------------- 搜索逻辑 ----------------
+// ---------------- 搜索逻辑（Worker Pool） ----------------
 type Result struct {
 	Score   int
 	Path    string
@@ -176,6 +230,10 @@ type Result struct {
 	IsDir   bool
 	ModTime time.Time
 	Size    int64
+}
+type Task struct {
+	Path  string
+	Depth int
 }
 
 func typeFilter(path string, isDir bool, fileType string) bool {
@@ -194,33 +252,24 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
-// ---------------- Worker Pool ----------------
-type Task struct {
-	Path  string
-	Depth int
-}
-
-func worker(id int, wg *sync.WaitGroup, tasks <-chan Task, query Query, pc *PinyinCache, excludes map[string]bool, baseDepth, maxDepth int, resultChan chan<- Result) {
+func worker(id int, wg *sync.WaitGroup, tasks chan Task, query Query, pc *PinyinCache, excludes map[string]bool, maxDepth int, resultChan chan<- Result) {
 	defer wg.Done()
 	for task := range tasks {
 		entries, err := os.ReadDir(task.Path)
 		if err != nil {
 			continue
 		}
-
 		for _, entry := range entries {
 			name := entry.Name()
 			if strings.HasPrefix(name, ".") || excludes[name] {
 				continue
 			}
-
 			fullPath := filepath.Join(task.Path, name)
 			info, err := os.Stat(fullPath)
 			if err != nil {
 				continue
 			}
 
-			// 匹配
 			if typeFilter(fullPath, entry.IsDir(), query.FileType) {
 				score := matchScore(query.Keywords, name, pc)
 				if score > 0 {
@@ -235,14 +284,9 @@ func worker(id int, wg *sync.WaitGroup, tasks <-chan Task, query Query, pc *Piny
 				}
 			}
 
-			// 目录且深度允许 -> 加入队列
 			if entry.IsDir() {
 				if maxDepth == -1 || task.Depth+1 <= maxDepth {
-					// 投递新任务
-					go func(p string, depth int) {
-						// 投递任务（防止阻塞，可以用 select 检查，但这里保证容量足够）
-						tasks <- Task{Path: p, Depth: depth}
-					}(fullPath, task.Depth+1)
+					tasks <- Task{Path: fullPath, Depth: task.Depth + 1}
 				}
 			}
 		}
@@ -278,14 +322,14 @@ func main() {
 
 	pc := NewPinyinCache()
 	resultChan := make(chan Result, 5000)
-	tasks := make(chan Task, 1000) // 任务队列
+	tasks := make(chan Task, 1000)
 
 	var wg sync.WaitGroup
 
 	// 启动 worker
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go worker(i, &wg, tasks, query, pc, excludesMap, 0, maxDepth, resultChan)
+		go worker(i, &wg, tasks, query, pc, excludesMap, maxDepth, resultChan)
 	}
 
 	// 投递初始任务
@@ -319,7 +363,6 @@ func main() {
 		}
 		return si > sj
 	})
-
 	if len(results) > maxRes {
 		results = results[:maxRes]
 	}
