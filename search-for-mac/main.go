@@ -34,14 +34,15 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	pc.mu.RUnlock()
 
 	// 全拼矩阵
-	args := pinyin.NewArgs()
-	pyMatrix := pinyin.Pinyin(name, args)
-	fullList := combinePinyin(pyMatrix)
+	args1 := pinyin.NewArgs()
+	pyMatrix := pinyin.Pinyin(name, args1) // [["yin"], ["hang","xing"], ["xin"], ["xi"]]
+	fullList := combinePinyin(pyMatrix)   // => yinhangxinxi, yinxingxinxi
 
-	// 首字母矩阵（修正点）
-	args.Style = pinyin.FirstLetter
-	pyMatrix2 := pinyin.Pinyin(name, args)
-	initList := combinePinyin(pyMatrix2)
+	// 首字母矩阵
+	args2 := pinyin.NewArgs()
+	args2.Style = pinyin.FirstLetter
+	pyMatrix2 := pinyin.Pinyin(name, args2) // [["y"], ["h","x"], ["x"], ["x"]]
+	initList := combinePinyin(pyMatrix2)    // => yhxx, yxxx
 
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{
@@ -53,7 +54,7 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	return fullList, initList
 }
 
-// 组合函数保持不变
+// 组合展开 [["yin"], ["hang","xing"], ["xin"], ["xi"]] → ["yinhangxinxi","yinxingxinxi"]
 func combinePinyin(matrix [][]string) []string {
 	results := []string{""}
 	for _, choices := range matrix {
@@ -94,7 +95,6 @@ func parseQuery(raw string) Query {
 func getConfig() ([]string, []string, int) {
 	homeDir, _ := os.UserHomeDir()
 
-	// 搜索目录
 	dirEnv := os.Getenv("SEARCH_DIRS")
 	var dirs []string
 	if dirEnv != "" {
@@ -105,7 +105,6 @@ func getConfig() ([]string, []string, int) {
 		dirs = []string{"Documents", "Desktop", "Downloads"}
 	}
 
-	// 忽略目录
 	exclEnv := os.Getenv("EXCLUDES")
 	var excl []string
 	if exclEnv != "" {
@@ -116,13 +115,11 @@ func getConfig() ([]string, []string, int) {
 		excl = []string{".git", "__pycache__", "node_modules", ".DS_Store"}
 	}
 
-	// 最大结果数
 	maxRes := 100
 	if os.Getenv("MAX_RESULTS") != "" {
 		fmt.Sscanf(os.Getenv("MAX_RESULTS"), "%d", &maxRes)
 	}
 
-	// 白名单完整路径
 	var wl []string
 	for _, d := range dirs {
 		full := filepath.Join(homeDir, d)
@@ -163,7 +160,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		}
 	}
 
-	// 拼音匹配（支持多音字）
+	// 拼音匹配（支持多音字组合）
 	fullList, initList := pc.GetAll(name)
 
 	for _, full := range fullList {
@@ -250,18 +247,16 @@ func searchDir(base string, query Query, pc *PinyinCache, excludes map[string]bo
 
 // ---------------- Alfred 输出 ----------------
 type AlfredItem struct {
-	Uid          string `json:"uid"`
-	Title        string `json:"title"`
-	Subtitle     string `json:"subtitle"`
-	Arg          string `json:"arg"`
-	Quicklookurl string `json:"quicklookurl"`
-	Icon         struct {
+	Uid      string `json:"uid"`
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+	Arg      string `json:"arg"`
+	Icon     struct {
 		Type string `json:"type"`
 		Path string `json:"path"`
 	} `json:"icon"`
 }
 
-// ---------------- 主函数 ----------------
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println(`{"items": []}`)
@@ -301,45 +296,15 @@ func main() {
 		results = append(results, r)
 	}
 
-	// 排序 + 权重优化
+	// 排序优化：分数 + 最近修改优先
 	sort.Slice(results, func(i, j int) bool {
 		si, sj := results[i].Score, results[j].Score
-
-		// 最近修改加权
 		if results[i].ModTime.After(time.Now().AddDate(0, 0, -30)) {
 			si += 50
 		}
 		if results[j].ModTime.After(time.Now().AddDate(0, 0, -30)) {
 			sj += 50
 		}
-
-		// 类型优先
-		if query.FileType == "dir" {
-			if results[i].IsDir && !results[j].IsDir {
-				return true
-			}
-			if !results[i].IsDir && results[j].IsDir {
-				return false
-			}
-		}
-		if query.FileType == "file" {
-			if !results[i].IsDir && results[j].IsDir {
-				return true
-			}
-			if results[i].IsDir && !results[j].IsDir {
-				return false
-			}
-		}
-
-		// 扩展名优先
-		if strings.HasPrefix(query.FileType, ".") {
-			iMatch := strings.HasSuffix(strings.ToLower(results[i].Path), query.FileType)
-			jMatch := strings.HasSuffix(strings.ToLower(results[j].Path), query.FileType)
-			if iMatch != jMatch {
-				return iMatch
-			}
-		}
-
 		return si > sj
 	})
 
@@ -350,18 +315,16 @@ func main() {
 	items := []AlfredItem{}
 	for _, r := range results {
 		item := AlfredItem{
-			Uid:          r.Path,
-			Title:        r.Name,
-			Arg:          r.Path,
-			Quicklookurl: r.Path,
+			Uid:   r.Path,
+			Title: r.Name,
+			Arg:   r.Path,
 		}
 
-		// Subtitle 优化
 		parent := filepath.Dir(r.Path)
 		if r.IsDir {
 			item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
 		} else {
-			item.Subtitle = fmt.Sprintf("📄 文件 | %s | %.1fKB | 修改: %s",
+			item.Subtitle = fmt.Sprintf("📄 文件 | %s | %.1fKB | 修改:%s",
 				parent, float64(r.Size)/1024,
 				r.ModTime.Format("2006-01-02 15:04"))
 		}
