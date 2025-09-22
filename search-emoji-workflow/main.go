@@ -63,12 +63,11 @@ func main() {
 	iconDir := filepath.Join(baseDir, "icons")
 	recentFile := getRecentFile(baseDir)
 
-	// 模式切换：更新最近 OR 查询
+	// ====== 模式 1：更新最近使用 ======
 	if len(os.Args) > 2 && os.Args[1] == "--recent" {
 		emojiChar := os.Args[2]
 		recent := loadRecent(recentFile)
-
-		// 去掉已有的，插到最前
+		// 去重再置顶
 		newRecent := []string{emojiChar}
 		for _, r := range recent {
 			if r != emojiChar {
@@ -79,7 +78,8 @@ func main() {
 		return
 	}
 
-	// 查询模式
+	// ====== 模式 2：查询 =========
+	// 读取 emoji.json
 	data, err := os.ReadFile(dataFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading emoji.json: %v\n", err)
@@ -99,14 +99,18 @@ func main() {
 	// 读取最近使用
 	recent := loadRecent(recentFile)
 
-	// 结果构建
 	var results []Item
 
-	// 先放置最近使用（如果 query 为空，或者 query 直接匹配）
+	// 最近使用（仅 query 为空时展示）
 	if query == "" {
 		for _, rc := range recent {
-			code := fmt.Sprintf("%x", []rune(rc)[0]) // 简单从 rune 取 code
+			// 简单取第一个 rune 的 code
+			code := fmt.Sprintf("%x", []rune(rc)[0])
 			iconPath := filepath.Join(iconDir, code+".png")
+			// ❌ 没有对应图标的过滤掉
+			if _, err := os.Stat(iconPath); os.IsNotExist(err) {
+				continue
+			}
 			results = append(results, Item{
 				Title:    rc,
 				Subtitle: "最近使用",
@@ -117,7 +121,7 @@ func main() {
 		}
 	}
 
-	// 遍历所有emoji
+	// 遍历 emoji.json
 	for _, e := range emojis {
 		emojiChar := e.Char
 		searchText := strings.ToLower(e.Name + " " + e.Category + " " + e.Group + " " + e.Subgroup + " " + e.Char)
@@ -134,8 +138,14 @@ func main() {
 			}
 		}
 
+		// 图标路径
 		code := strings.ToLower(strings.ReplaceAll(e.Codes, " ", "-"))
 		iconPath := filepath.Join(iconDir, code+".png")
+
+		// ❌ 如果没有对应图标，跳过
+		if _, err := os.Stat(iconPath); os.IsNotExist(err) {
+			continue
+		}
 
 		results = append(results, Item{
 			Title:    emojiChar,
@@ -146,6 +156,7 @@ func main() {
 		})
 	}
 
+	// 没有结果时提示
 	if len(results) == 0 {
 		results = append(results, Item{
 			Title:    "❌ 未找到 Emoji",
@@ -154,6 +165,7 @@ func main() {
 		})
 	}
 
+	// 输出 Alfred JSON
 	output, _ := json.Marshal(map[string]interface{}{"items": results})
 	fmt.Println(string(output))
 }
