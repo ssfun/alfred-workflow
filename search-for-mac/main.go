@@ -14,8 +14,6 @@ import (
 )
 
 // ---------------- 拼音缓存（支持多音字） ----------------
-var a = pinyin.NewArgs()
-
 type PinyinCache struct {
 	mu    sync.RWMutex
 	cache map[string][2]string
@@ -46,7 +44,6 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	pyMatrix2 := pinyin.Pinyin(name, args2)
 	initList := combinePinyin(pyMatrix2)
 
-	// 缓存（用逗号拼接避免数组 JSON 序列化）
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{
 		strings.Join(fullList, ","),
@@ -57,7 +54,7 @@ func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	return fullList, initList
 }
 
-// 组合展开 [["yin"], ["hang","xing"], ["xin"], ["xi"]] → ["yinhangxinxi","yinxingxinxi"]
+// 展开多音字组合 [["yin"], ["hang","xing"], ["xin"], ["xi"]]
 func combinePinyin(matrix [][]string) []string {
 	results := []string{""}
 	for _, choices := range matrix {
@@ -72,32 +69,11 @@ func combinePinyin(matrix [][]string) []string {
 	return results
 }
 
-// ---------------- 查询解析 ----------------
-type Query struct {
-	Keywords string
-	FileType string // "dir" / "file" / ".ext"
-}
-
-func parseQuery(raw string) Query {
-	tokens := strings.Fields(raw)
-	q := Query{}
-	keywords := []string{}
-	for _, t := range tokens {
-		low := strings.ToLower(t)
-		if low == "dir" || low == "file" || strings.HasPrefix(low, ".") {
-			q.FileType = low
-		} else {
-			keywords = append(keywords, t)
-		}
-	}
-	q.Keywords = strings.Join(keywords, " ")
-	return q
-}
-
-// ---------------- 配置读取（环境变量） ----------------
+// ---------------- 配置读取 ----------------
 func getConfig() ([]string, []string, int) {
 	homeDir, _ := os.UserHomeDir()
 
+	// 搜索目录
 	dirEnv := os.Getenv("SEARCH_DIRS")
 	var dirs []string
 	if dirEnv != "" {
@@ -108,6 +84,7 @@ func getConfig() ([]string, []string, int) {
 		dirs = []string{"Documents", "Desktop", "Downloads"}
 	}
 
+	// 忽略目录
 	exclEnv := os.Getenv("EXCLUDES")
 	var excl []string
 	if exclEnv != "" {
@@ -118,11 +95,13 @@ func getConfig() ([]string, []string, int) {
 		excl = []string{".git", "__pycache__", "node_modules", ".DS_Store"}
 	}
 
+	// 最大结果数
 	maxRes := 100
 	if os.Getenv("MAX_RESULTS") != "" {
 		fmt.Sscanf(os.Getenv("MAX_RESULTS"), "%d", &maxRes)
 	}
 
+	// 白名单完整路径
 	var wl []string
 	for _, d := range dirs {
 		full := filepath.Join(homeDir, d)
@@ -134,7 +113,8 @@ func getConfig() ([]string, []string, int) {
 	return wl, excl, maxRes
 }
 
-// ---------------- 匹配算法 ----------------
+// ---------------- 匹配逻辑 ----------------
+
 func fuzzyMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -146,37 +126,70 @@ func fuzzyMatch(query, target string) bool {
 	return i == len(query)
 }
 
+// 编辑距离 (Levenshtein Distance)
+func editDistance(s1, s2 string) int {
+	r1, r2 := []rune(s1), []rune(s2)
+	len1, len2 := len(r1), len(r2)
+	dp := make([][]int, len1+1)
+	for i := range dp {
+		dp[i] = make([]int, len2+1)
+	}
+	for i := 0; i <= len1; i++ {
+		dp[i][0] = i
+	}
+	for j := 0; j <= len2; j++ {
+		dp[0][j] = j
+	}
+	for i := 1; i <= len1; i++ {
+		for j := 1; j <= len2; j++ {
+			cost := 0
+			if r1[i-1] != r2[j-1] {
+				cost = 1
+			}
+			dp[i][j] = min(dp[i-1][j]+1, min(dp[i][j-1]+1, dp[i-1][j-1]+cost))
+		}
+	}
+	return dp[len1][len2]
+}
+
 func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 	scores := []int{}
 
-	// 文件名直配优先
+	// 文件名直配
 	if fuzzyMatch(q, nameLower) {
-		pos := strings.Index(nameLower, q)
-		if nameLower == q {
-			scores = append(scores, 500)
-		} else if pos == 0 {
-			scores = append(scores, 400)
-		} else {
-			scores = append(scores, 300-pos-abs(len(name)-len(q)))
-		}
+		scores = append(scores, 500)
 	}
 
-	// 拼音匹配（支持多音字组合）
+	// 拼音匹配（支持多音字+容错）
 	fullList, initList := pc.GetAll(name)
 
+	// 精确匹配
 	for _, full := range fullList {
 		if fuzzyMatch(q, full) {
-			scores = append(scores, 200-abs(len(full)-len(q)))
-			break
+			scores = append(scores, 200)
+		}
+	}
+	for _, initials := range initList {
+		if fuzzyMatch(q, initials) {
+			scores = append(scores, 180)
 		}
 	}
 
-	for _, initials := range initList {
-		if fuzzyMatch(q, initials) {
-			scores = append(scores, 150-abs(len(initials)-len(q)))
-			break
+	// 容错匹配（仅在未命中时触发，性能优化）
+	if len(scores) == 0 {
+		for _, full := range fullList {
+			if editDistance(q, full) <= 2 { // 全拼容错
+				scores = append(scores, 120)
+				break
+			}
+		}
+		for _, initials := range initList {
+			if editDistance(q, initials) <= 1 { // 首字母容错
+				scores = append(scores, 100)
+				break
+			}
 		}
 	}
 
@@ -199,23 +212,7 @@ type Result struct {
 	Size    int64
 }
 
-func typeFilter(path string, isDir bool, fileType string) bool {
-	if fileType == "" {
-		return true
-	}
-	if fileType == "dir" {
-		return isDir
-	}
-	if fileType == "file" {
-		return !isDir
-	}
-	if strings.HasPrefix(fileType, ".") {
-		return strings.HasSuffix(strings.ToLower(path), fileType)
-	}
-	return true
-}
-
-func searchDir(base string, query Query, pc *PinyinCache, excludes map[string]bool, wg *sync.WaitGroup, resultChan chan<- Result) {
+func searchDir(base string, query string, pc *PinyinCache, excludes map[string]bool, wg *sync.WaitGroup, resultChan chan<- Result) {
 	defer wg.Done()
 	filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -228,11 +225,7 @@ func searchDir(base string, query Query, pc *PinyinCache, excludes map[string]bo
 			}
 			return nil
 		}
-		if !typeFilter(path, d.IsDir(), query.FileType) {
-			return nil
-		}
-
-		score := matchScore(query.Keywords, name, pc)
+		score := matchScore(query, name, pc)
 		if score > 0 {
 			info, _ := os.Stat(path)
 			resultChan <- Result{
@@ -265,8 +258,7 @@ func main() {
 		fmt.Println(`{"items": []}`)
 		return
 	}
-	rawQuery := os.Args[1]
-	query := parseQuery(rawQuery)
+	query := os.Args[1]
 
 	whitelistDirs, excludesList, maxRes := getConfig()
 	excludesMap := make(map[string]bool)
@@ -289,8 +281,7 @@ func main() {
 	}()
 
 	results := []Result{}
-	seen := make(map[string]bool) // 去重
-
+	seen := make(map[string]bool)
 	for r := range resultChan {
 		if seen[r.Path] {
 			continue
@@ -299,16 +290,9 @@ func main() {
 		results = append(results, r)
 	}
 
-	// 排序优化：分数 + 最近修改优先
+	// 排序
 	sort.Slice(results, func(i, j int) bool {
-		si, sj := results[i].Score, results[j].Score
-		if results[i].ModTime.After(time.Now().AddDate(0, 0, -30)) {
-			si += 50
-		}
-		if results[j].ModTime.After(time.Now().AddDate(0, 0, -30)) {
-			sj += 50
-		}
-		return si > sj
+		return results[i].Score > results[j].Score
 	})
 
 	if len(results) > maxRes {
@@ -322,16 +306,14 @@ func main() {
 			Title: r.Name,
 			Arg:   r.Path,
 		}
-
 		parent := filepath.Dir(r.Path)
 		if r.IsDir {
-			item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
+			item.Subtitle = fmt.Sprintf("📂 %s | %s", r.Name, parent)
 		} else {
-			item.Subtitle = fmt.Sprintf("📄 文件 | %s | %.1fKB | 修改:%s",
+			item.Subtitle = fmt.Sprintf("📄 %s | %.1fKB | 修改:%s",
 				parent, float64(r.Size)/1024,
 				r.ModTime.Format("2006-01-02 15:04"))
 		}
-
 		item.Icon.Type = "fileicon"
 		item.Icon.Path = r.Path
 		items = append(items, item)
@@ -342,9 +324,9 @@ func main() {
 }
 
 // ---------------- 工具函数 ----------------
-func abs(x int) int {
-	if x < 0 {
-		return -x
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-	return x
+	return b
 }
