@@ -298,6 +298,20 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	return score
 }
 
+// min3 返回三个数中的最小值
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
 // ---------------- 文件大小格式化 ----------------
 func formatSize(size int64) string {
 	if size < 1024 {
