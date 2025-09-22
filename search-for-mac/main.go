@@ -15,12 +15,13 @@ import (
 
 var a = pinyin.NewArgs()
 
-// -------------------- 多音字 --------------------
+// ---------------- 多音字字典 ----------------
 var polyphonic = map[rune][]string{}
 
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		// fallback 最小字典
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
 			'长': {"chang", "zhang"},
@@ -41,7 +42,7 @@ func loadPolyphonicDict(path string) {
 	}
 }
 
-// -------------------- 拼音缓存 --------------------
+// ---------------- 拼音缓存 ----------------
 type PinyinCache struct {
 	mu    sync.RWMutex
 	cache map[string][2]string
@@ -70,7 +71,7 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	return full, initials
 }
 
-// -------------------- 工具函数 --------------------
+// ---------------- 工具函数 ----------------
 func containsChinese(s string) bool {
 	for _, r := range s {
 		if r >= 0x4e00 && r <= 0x9fff {
@@ -112,7 +113,7 @@ func min3(a, b, c int) int {
 	return c
 }
 
-// -------------------- 多音字重试 --------------------
+// ---------------- 多音字重试 ----------------
 func retryPolyphonicMatch(query string, name string, full string) bool {
 	runes := []rune(name)
 	for i, r := range runes {
@@ -127,7 +128,6 @@ func retryPolyphonicMatch(query string, name string, full string) bool {
 	}
 	return false
 }
-
 func rebuildPinyin(runes []rune, idx int, alt string) string {
 	parts := []string{}
 	for i, r := range runes {
@@ -143,7 +143,7 @@ func rebuildPinyin(runes []rune, idx int, alt string) string {
 	return strings.Join(parts, "")
 }
 
-// -------------------- Query --------------------
+// ---------------- Query ----------------
 type Query struct {
 	Keywords string
 	FileType string
@@ -174,7 +174,7 @@ func parseQueryV2(raw string) []Query {
 	return queries
 }
 
-// -------------------- 配置 --------------------
+// ---------------- 配置 ----------------
 func getConfig() ([]string, []string, int, int) {
 	homeDir, _ := os.UserHomeDir()
 	dirs := []string{"Documents", "Desktop", "Downloads"}
@@ -201,7 +201,7 @@ func getConfig() ([]string, []string, int, int) {
 	return fullDirs, excludes, maxRes, maxDepth
 }
 
-// -------------------- 匹配算法 --------------------
+// ---------------- 匹配算法 ----------------
 func looseMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -239,66 +239,72 @@ func fuzzyMatchAllowOneError(query, target string) bool {
 	return dp[m][n] <= 1
 }
 
-// -------------------- 打分 --------------------
+// ---------------- 文件类型过滤 ----------------
+func typeFilter(path string, isDir bool, fileType string) bool {
+	if fileType == "" {
+		return true
+	}
+	if fileType == "dir" {
+		return isDir
+	}
+	if fileType == "file" {
+		return !isDir
+	}
+	if strings.HasPrefix(fileType, ".") {
+		return strings.HasSuffix(strings.ToLower(path), fileType)
+	}
+	return true
+}
+
+// ---------------- 打分 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 	debug := os.Getenv("DEBUG") == "1"
 	score := 0
 
-	// 英文文件名：严格匹配，不允许宽松
+	// 英文文件名 → 严格匹配
 	if isASCII(name) && !containsChinese(name) {
 		if nameLower == q {
-			score = 500
-			if debug {
-				fmt.Println("DEBUG:", name, "== exact")
-			}
-			return score
+			return 500
 		}
 		if strings.HasPrefix(nameLower, q) {
-			score = 450
-			if debug {
-				fmt.Println("DEBUG:", name, "== prefix")
-			}
-			return score
+			return 450
 		}
 		if strings.Contains(nameLower, q) {
-			score = 400
-			if debug {
-				fmt.Println("DEBUG:", name, "== contains")
-			}
-			return score
+			return 400
 		}
 		return 0
 	}
 
-	// 中文拼音逻辑
+	// 中文文件名 → 拼音
 	full, initials := pc.Get(name)
-	if full != "" {
-		if looseMatch(q, full) {
-			if len(full) == len(q) {
-				score = max(score, 380)
-			} else {
-				score = max(score, 300)
-			}
-		}
-		if retryPolyphonicMatch(q, name, full) {
-			score = max(score, 200)
-		}
-		if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
-			score = max(score, 150)
+
+	if looseMatch(q, full) {
+		if len(full) == len(q) {
+			score = max(score, 380)
+		} else {
+			score = max(score, 300)
 		}
 	}
-	if initials != "" && looseMatch(q, initials) {
+	if retryPolyphonicMatch(q, name, full) {
+		score = max(score, 200)
+	}
+	if abs(len(q)-len(full)) <= 2 && fuzzyMatchAllowOneError(q, full) {
+		score = max(score, 150)
+	}
+	// ✅ initials 必须保留
+	if looseMatch(q, initials) {
 		score = max(score, 180)
 	}
+
 	if debug && score > 0 {
-		fmt.Printf("DEBUG: %s → %d\n", name, score)
+		fmt.Printf("DEBUG: %s ←%s→ %d\n", name, q, score)
 	}
 	return score
 }
 
-// -------------------- 文件大小 --------------------
+// ---------------- 文件大小 ----------------
 func formatSize(size int64) string {
 	if size < 1024 {
 		return fmt.Sprintf("%dB", size)
@@ -320,7 +326,7 @@ func formatSize(size int64) string {
 	return fmt.Sprintf("%.1fTB", float64(size)/float64(1024*1024*1024*1024))
 }
 
-// -------------------- 搜索逻辑 --------------------
+// ---------------- 搜索逻辑 ----------------
 type Result struct {
 	Score   int
 	Path    string
@@ -344,6 +350,9 @@ func searchDirOnce(base string, queries []Query, pc *PinyinCache, excludes map[s
 			return nil
 		}
 		for _, q := range queries {
+			if !typeFilter(path, d.IsDir(), q.FileType) {
+				continue
+			}
 			score := matchScore(q.Keywords, name, pc)
 			if score > 0 {
 				info, _ := os.Stat(path)
@@ -354,7 +363,7 @@ func searchDirOnce(base string, queries []Query, pc *PinyinCache, excludes map[s
 	})
 }
 
-// -------------------- Alfred 输出 --------------------
+// ---------------- Alfred 输出 ----------------
 type AlfredItem struct {
 	Uid      string `json:"uid"`
 	Title    string `json:"title"`
@@ -367,7 +376,7 @@ type AlfredItem struct {
 	} `json:"icon"`
 }
 
-// -------------------- main --------------------
+// ---------------- main ----------------
 func main() {
 	loadPolyphonicDict("polyphonic.json")
 	if len(os.Args) < 2 {
@@ -423,9 +432,9 @@ func main() {
 			item := AlfredItem{Uid: r.Path, Title: r.Name, Arg: r.Path, Valid: true}
 			parent := filepath.Dir(r.Path)
 			if r.IsDir {
-				item.Subtitle = fmt.Sprintf("%s", parent)
+				item.Subtitle = fmt.Sprintf("📂 文件夹 | %s", parent)
 			} else {
-				item.Subtitle = fmt.Sprintf("%s | %s | 修改: %s",
+				item.Subtitle = fmt.Sprintf("📄 文件 | %s | %s | 修改: %s",
 					parent, formatSize(r.Size), r.ModTime.Format("2006-01-02 15:04"))
 			}
 			item.Icon.Type = "fileicon"
