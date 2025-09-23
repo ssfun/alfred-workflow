@@ -23,6 +23,13 @@ var polyphonic = map[rune][]string{
 	'处': {"chu", "cu"},
 }
 
+// ---------------- Debug 打印 ----------------
+func debugPrint(format string, a ...interface{}) {
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] "+format+"\n", a...)
+	}
+}
+
 // ---------------- 拼音缓存 ----------------
 type PinyinCache struct {
 	mu    sync.RWMutex
@@ -33,7 +40,7 @@ func NewPinyinCache() *PinyinCache {
 	return &PinyinCache{cache: make(map[string][2]string)}
 }
 
-var a = pinyin.NewArgs()
+var pyArgs = pinyin.NewArgs()
 
 func (pc *PinyinCache) Get(name string) (string, string) {
 	pc.mu.RLock()
@@ -51,27 +58,28 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 				fullParts = append(fullParts, alts[0])
 				initials = append(initials, string(alts[0][0]))
 			} else {
-				py := pinyin.LazyPinyin(string(r), a)
+				py := pinyin.LazyPinyin(string(r), pyArgs)
 				if len(py) > 0 {
 					fullParts = append(fullParts, py[0])
 					initials = append(initials, string(py[0][0]))
 				}
 			}
 		} else {
-			// 非中文字符直接当作小写
 			fullParts = append(fullParts, strings.ToLower(string(r)))
 			initials = append(initials, strings.ToLower(string(r)))
 		}
 	}
 	full := strings.Join(fullParts, "")
 	initialStr := strings.Join(initials, "")
+
 	pc.mu.Lock()
 	pc.cache[name] = [2]string{full, initialStr}
 	pc.mu.Unlock()
+
 	return full, initialStr
 }
 
-// ---------------- 辅助函数 ----------------
+// ---------------- 匹配辅助函数 ----------------
 func looseMatch(query, target string) bool {
 	query = strings.ToLower(query)
 	target = strings.ToLower(target)
@@ -115,10 +123,14 @@ func fuzzyMatchAllowOneError(query, target string) bool {
 func abs(x int) int { if x < 0 { return -x }; return x }
 func min3(a, b, c int) int {
 	if a < b {
-		if a < c { return a }
+		if a < c {
+			return a
+		}
 		return c
 	}
-	if b < c { return b }
+	if b < c {
+		return b
+	}
 	return c
 }
 
@@ -127,44 +139,47 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	if query == "" {
 		return 0
 	}
-
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 
-	// 中文或原文直接包含
 	if strings.Contains(nameLower, q) {
+		debugPrint("匹配命中: [%s] query=%q 命中原文", name, q)
 		return 400
 	}
 
 	full, initials := pc.Get(name)
 
-	// 首字母匹配
 	if q == initials {
+		debugPrint("匹配命中: [%s] query=%q == 首字母拼音(%s)", name, q, initials)
 		return 380
 	} else if looseMatch(q, initials) {
+		debugPrint("匹配命中: [%s] query=%q 子序列命中首字母拼音(%s)", name, q, initials)
 		return 250
 	} else if strings.Contains(initials, q) {
+		debugPrint("匹配命中: [%s] query=%q 子串命中首字母拼音(%s)", name, q, initials)
 		return 240
 	}
 
-	// 全拼匹配
 	if q == full {
+		debugPrint("匹配命中: [%s] query=%q == 全拼(%s)", name, q, full)
 		return 350
 	} else if strings.HasPrefix(full, q) {
+		debugPrint("匹配命中: [%s] query=%q 前缀命中全拼(%s)", name, q, full)
 		return 300
 	} else if strings.Contains(full, q) {
+		debugPrint("匹配命中: [%s] query=%q 子串命中全拼(%s)", name, q, full)
 		return 280
 	}
 
-	// 模糊拼音
 	if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
+		debugPrint("匹配命中: [%s] query=%q 模糊匹配全拼(%s)", name, q, full)
 		return 80
 	}
 
 	return 0
 }
 
-// ---------------- Feishu 文档结构 ----------------
+// ---------------- Feishu Document ----------------
 type Document struct {
 	Title     string              `json:"title"`
 	Preview   string              `json:"preview,omitempty"`
@@ -183,7 +198,6 @@ type AlfredItem struct {
 		Path string `json:"path"`
 	} `json:"icon"`
 }
-
 type AlfredOutput struct {
 	Items []AlfredItem `json:"items"`
 }
@@ -192,7 +206,6 @@ func removeEmTags(input string) string {
 	re := regexp.MustCompile(`</?em>`)
 	return re.ReplaceAllString(input, "")
 }
-
 func getIconPath(docType int) string {
 	switch docType {
 	case 22:
@@ -208,64 +221,28 @@ func getIconPath(docType int) string {
 	}
 }
 
-func formatForAlfred(docs []Document) AlfredOutput {
-	items := []AlfredItem{}
-	for _, doc := range docs {
-		item := AlfredItem{
-			Title:    removeEmTags(doc.Title),
-			Subtitle: fmt.Sprintf("Last opened: %s by %s", time.Unix(doc.OpenTime, 0).Format("2006-01-02 15:04:05"), doc.EditName),
-			Arg:      doc.URL,
-		}
-		if item.Arg == "" && len(doc.WikiInfos) > 0 {
-			item.Arg = doc.WikiInfos[0]["wiki_url"]
-		}
-		item.Icon.Path = getIconPath(doc.Type)
-		items = append(items, item)
-	}
-	return AlfredOutput{Items: items}
-}
-
-// ---------------- Main ----------------
-func main() {
-	session := os.Getenv("FEISHU_SESSION")
-	apiURL := os.Getenv("FEISHU_API_URL")
-	if session == "" || apiURL == "" {
-		output, _ := json.Marshal(AlfredOutput{
-			Items: []AlfredItem{{Title: "Error", Subtitle: "环境变量 FEISHU_SESSION 或 FEISHU_API_URL 未设置"}},
-		})
-		fmt.Println(string(output))
-		return
-	}
-
-	// 参数
-	args := os.Args[1:]
-	query := ""
-	searchAll := false
-	if len(args) > 0 {
-		query = strings.Join(args, " ")
-		if strings.HasSuffix(query, " -a") {
-			query = strings.TrimSuffix(query, " -a")
-			searchAll = true
-		}
-	}
-
-	// 请求 Feishu API （✅ 不带用户输入 query！）
+// ---------------- Feishu Fetch ----------------
+func fetchDocuments(session, apiURL string, query string, useQuery bool) []Document {
 	req, _ := http.NewRequest("GET", apiURL, nil)
 	req.Header.Set("Cookie", fmt.Sprintf("session=%s; session_list=%s", session, session))
-
+	if useQuery && query != "" {
+		q := req.URL.Query()
+		q.Add("query", query)
+		req.URL.RawQuery = q.Encode()
+	}
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != 200 {
-		fmt.Println(`{"items":[{"title":"Error","subtitle":"请求 Feishu 接口失败"}]}`)
-		return
+		return []Document{}
 	}
 	defer resp.Body.Close()
 
 	var data map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&data)
-	if err != nil || data["code"].(float64) != 0 {
-		fmt.Println(`{"items":[{"title":"Error","subtitle":"解析响应失败"}]}`)
-		return
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return []Document{}
+	}
+	if data["code"].(float64) != 0 {
+		return []Document{}
 	}
 
 	entities := data["data"].(map[string]interface{})["entities"].(map[string]interface{})
@@ -277,8 +254,59 @@ func main() {
 		_ = json.Unmarshal(b, &d)
 		docs = append(docs, d)
 	}
+	return docs
+}
 
-	// 本地搜索过滤
+// ---------------- 中文检测 ----------------
+func containsChinese(s string) bool {
+	for _, r := range s {
+		if r >= 0x4e00 && r <= 0x9fff {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------- main ----------------
+func main() {
+	session := os.Getenv("FEISHU_SESSION")
+	apiURL := os.Getenv("FEISHU_API_URL")
+	if session == "" || apiURL == "" {
+		output, _ := json.Marshal(AlfredOutput{
+			Items: []AlfredItem{{Title: "Error", Subtitle: "环境变量 FEISHU_SESSION 或 FEISHU_API_URL 未设置"}},
+		})
+		fmt.Println(string(output))
+		return
+	}
+
+	args := os.Args[1:]
+	query := ""
+	searchAll := false
+	if len(args) > 0 {
+		query = strings.Join(args, " ")
+		if strings.HasSuffix(query, " -a") {
+			query = strings.TrimSuffix(query, " -a")
+			searchAll = true
+		}
+	}
+
+	// ✅ -a 时强制传 query 给 Feishu
+	useQuery := false
+	if searchAll {
+		useQuery = true
+		debugPrint("搜索模式: -a 强制传给飞书, query=%q", query)
+	} else {
+		useQuery = containsChinese(query)
+		if useQuery {
+			debugPrint("搜索模式: 中文输入 -> 远端 Feishu 搜索, query=%q", query)
+		} else {
+			debugPrint("搜索模式: 拼音/缩写输入 -> 本地搜索, query=%q", query)
+		}
+	}
+
+	docs := fetchDocuments(session, apiURL, query, useQuery)
+	debugPrint("获取文档数量: %d", len(docs))
+
 	pc := NewPinyinCache()
 	type scoredDoc struct {
 		Doc   Document
@@ -288,6 +316,7 @@ func main() {
 	for _, doc := range docs {
 		title := removeEmTags(doc.Title)
 		preview := removeEmTags(doc.Preview)
+
 		score := matchScore(query, title, pc)
 		if searchAll && score == 0 {
 			score = matchScore(query, preview, pc)
@@ -296,8 +325,8 @@ func main() {
 			results = append(results, scoredDoc{Doc: doc, Score: score})
 		}
 	}
+	debugPrint("匹配结果数量: %d", len(results))
 
-	// 排序：打分优先，其次按 open_time
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score == results[j].Score {
 			return results[i].Doc.OpenTime > results[j].Doc.OpenTime
@@ -305,12 +334,21 @@ func main() {
 		return results[i].Score > results[j].Score
 	})
 
-	finalDocs := []Document{}
+	items := []AlfredItem{}
 	for _, r := range results {
-		finalDocs = append(finalDocs, r.Doc)
+		doc := r.Doc
+		item := AlfredItem{
+			Title:    removeEmTags(doc.Title),
+			Subtitle: fmt.Sprintf("Last opened: %s by %s", time.Unix(doc.OpenTime, 0).Format("2006-01-02 15:04:05"), doc.EditName),
+			Arg:      doc.URL,
+		}
+		if item.Arg == "" && len(doc.WikiInfos) > 0 {
+			item.Arg = doc.WikiInfos[0]["wiki_url"]
+		}
+		item.Icon.Path = getIconPath(doc.Type)
+		items = append(items, item)
 	}
-
-	output := formatForAlfred(finalDocs)
+	output := AlfredOutput{Items: items}
 	j, _ := json.Marshal(output)
 	fmt.Println(string(j))
 }
