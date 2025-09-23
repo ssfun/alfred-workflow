@@ -21,7 +21,6 @@ var polyphonic = map[rune][]string{}
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// 默认多音字表（常用）
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
 			'长': {"chang", "zhang"},
@@ -122,49 +121,36 @@ func fuzzyMatchAllowOneError(query, target string) bool {
 	return dp[m][n] <= 1
 }
 
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
+func abs(x int) int { if x < 0 { return -x }; return x }
 func min3(a, b, c int) int {
 	if a < b {
-		if a < c {
-			return a
-		}
+		if a < c { return a }
 		return c
 	}
-	if b < c {
-		return b
-	}
+	if b < c { return b }
 	return c
 }
 
 func isASCII(s string) bool {
 	for i := 0; i < len(s); i++ {
-		if s[i] >= 128 {
-			return false
-		}
+		if s[i] >= 128 { return false }
 	}
 	return true
 }
 
 // ---------------- 打分函数 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
-	if query == "" {
-		return 0
-	}
+	if query == "" { return 0 }
 
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 
-	// 1. 直接包含（支持中文/英文）
+	// 中文/英文直接包含
 	if strings.Contains(nameLower, q) || strings.Contains(name, query) {
 		return 400
 	}
 
-	// 2. 英文文件名逻辑
+	// 英文文件名逻辑
 	if isASCII(name) {
 		if nameLower == q {
 			return 500
@@ -175,26 +161,22 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		return 0
 	}
 
-	// 3. 中文文件名逻辑 -> 拼音匹配
+	// 中文拼音逻辑
 	full, initials := pc.Get(name)
-	score := 0
 	if strings.EqualFold(q, initials) {
-		score = 380
+		return 380
 	} else if looseMatch(q, initials) {
-		score = 250
+		return 250
 	}
-
 	if strings.EqualFold(q, full) {
-		score = 350
+		return 350
 	} else if strings.HasPrefix(full, q) {
-		score = 300
+		return 300
 	}
-
 	if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
-		score = 80
+		return 80
 	}
-
-	return score
+	return 0
 }
 
 // ---------------- 结果结构 ----------------
@@ -233,9 +215,7 @@ const (
 // ---------------- 从环境配置找到模式 ----------------
 func getSortMode() string {
 	keyword := os.Getenv("alfred_workflow_keyword")
-	if keyword == "" {
-		return ModeScore
-	}
+	if keyword == "" { return ModeScore }
 	modes := []string{
 		ModeModTimeDesc,
 		ModeModTimeAsc,
@@ -245,7 +225,7 @@ func getSortMode() string {
 		ModeFilenameDesc,
 	}
 	for _, m := range modes {
-		if os.Getenv(m) == keyword { // Alfred 配置里：变量名=模式，值=keyword
+		if os.Getenv(m) == keyword {
 			return m
 		}
 	}
@@ -269,27 +249,44 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
+// ---------------- 解析 query 支持 .dir/.file/.pdf 前后皆可 ----------------
+func parseQueryArgs() (query string, fileType string) {
+	if len(os.Args) <= 1 {
+		return "", ""
+	}
+
+	raw := strings.TrimSpace(os.Args[1])
+	parts := strings.Fields(raw)
+
+	queryParts := []string{}
+	for _, p := range parts {
+		lp := strings.ToLower(p)
+		if lp == ".dir" {
+			fileType = "dir"
+		} else if lp == ".file" {
+			fileType = "file"
+		} else if strings.HasPrefix(lp, ".") {
+			fileType = lp // .pdf, .png 等
+		} else {
+			queryParts = append(queryParts, lp)
+		}
+	}
+	return strings.Join(queryParts, " "), fileType
+}
+
 // ---------------- main ----------------
 func main() {
 	loadPolyphonicDict("polyphonic.json")
-
 	mode := getSortMode()
 
-	// 搜索词
-	query := ""
-	if len(os.Args) > 1 {
-		query = strings.ToLower(strings.TrimSpace(os.Args[1]))
-	}
+	// 支持 .dir 项目 和 项目 .dir
+	query, fileType := parseQueryArgs()
 
-	// 搜索目录
 	searchDir := os.Getenv("SEARCH_DIR")
 	if searchDir == "" {
 		home, _ := os.UserHomeDir()
 		searchDir = filepath.Join(home, "Downloads")
 	}
-
-	// 文件类型过滤参数
-	fileType := strings.ToLower(os.Getenv("SEARCH_FILETYPE"))
 
 	entries, err := os.ReadDir(searchDir)
 	if err != nil {
@@ -300,23 +297,17 @@ func main() {
 	pc := NewPinyinCache()
 	results := []Result{}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
+		if strings.HasPrefix(e.Name(), ".") { continue }
 		info, err := e.Info()
-		if err != nil {
-			continue
-		}
+		if err != nil { continue }
 
-		// ✅ 新的文件类型过滤
+		// 类型过滤
 		if !typeFilter(filepath.Join(searchDir, e.Name()), e.IsDir(), fileType) {
 			continue
 		}
 
 		score := matchScore(query, e.Name(), pc)
-		if query == "" {
-			score = 100 // 没输入 query 时，全部展示
-		}
+		if query == "" { score = 100 }
 		if score > 0 {
 			results = append(results, Result{
 				Score:   score,
@@ -329,7 +320,7 @@ func main() {
 		}
 	}
 
-	// 排序：先比分数，再按 mode
+	// 排序：先按 score，再按 mode
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score != results[j].Score {
 			return results[i].Score > results[j].Score
@@ -348,7 +339,7 @@ func main() {
 		}
 	})
 
-	// 输出 JSON 给 Alfred
+	// 输出结果给 Alfred
 	items := []AlfredItem{}
 	if len(results) == 0 {
 		item := AlfredItem{
@@ -367,10 +358,8 @@ func main() {
 				Arg:   r.Path,
 				Valid: true,
 			}
-			// Subtitle 只显示大小 + 修改时间
 			item.Subtitle = fmt.Sprintf("%d bytes | 修改时间: %s",
-				r.Size,
-				r.ModTime.Format("2006-01-02 15:04"))
+				r.Size, r.ModTime.Format("2006-01-02 15:04"))
 			item.Icon.Type = "fileicon"
 			item.Icon.Path = r.Path
 			items = append(items, item)
