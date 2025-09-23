@@ -144,49 +144,49 @@ func min3(a, b, c int) int {
 
 // ---------------- 打分函数 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
-	q := strings.ToLower(query)
-	nameLower := strings.ToLower(name)
+    if query == "" {
+        return 0
+    }
 
-	// 英文/ASCII 文件
-	if isASCII(name) {
-		if nameLower == q {
-			return 500
-		}
-		if strings.HasPrefix(nameLower, q) {
-			return 450
-		}
-		if strings.Contains(nameLower, q) {
-			return 400
-		}
-		return 0
-	}
+    q := strings.ToLower(query)
+    nameLower := strings.ToLower(name)
 
-	// 中文文件: 拼音匹配
-	full, initials := pc.Get(name)
-	score := 0
-	if strings.EqualFold(q, initials) {
-		score = 380
-	} else if looseMatch(q, initials) {
-		score = 250
-	}
-	if strings.EqualFold(q, full) {
-		score = 350
-	} else if strings.HasPrefix(full, q) {
-		score = 300
-	}
-	if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
-		score = 80
-	}
-	return score
-}
+    // 1. 直接包含（支持中文）
+    if strings.Contains(nameLower, q) || strings.Contains(name, query) {
+        return 400
+    }
 
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 128 {
-			return false
-		}
-	}
-	return true
+    // 2. 英文名逻辑
+    if isASCII(name) {
+        if nameLower == q {
+            return 500
+        }
+        if strings.HasPrefix(nameLower, q) {
+            return 450
+        }
+        return 0
+    }
+
+    // 3. 中文 -> 拼音逻辑
+    full, initials := pc.Get(name)
+    score := 0
+    if strings.EqualFold(q, initials) {
+        score = 380
+    } else if looseMatch(q, initials) {
+        score = 250
+    }
+
+    if strings.EqualFold(q, full) {
+        score = 350
+    } else if strings.HasPrefix(full, q) {
+        score = 300
+    }
+
+    if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
+        score = 80
+    }
+
+    return score
 }
 
 // ---------------- 结果结构 ----------------
@@ -284,10 +284,10 @@ func main() {
 			continue
 		}
 
-		score := 0
-		if query == "" || strings.Contains(strings.ToLower(e.Name()), query) {
-			score = matchScore(query, e.Name(), pc)
-		}
+		score := matchScore(query, e.Name(), pc)
+        if query == "" {
+            score = 100 // 如果用户没有输入 query，默认给一个正分，让结果展示出来
+        }
 		if score > 0 {
 			results = append(results, Result{
 				Score:   score,
