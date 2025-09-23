@@ -34,11 +34,11 @@ jobs:
         working-directory: ./search-for-recentdownloads
         run: |
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
-          go build -ldflags="-s -w" -o rencentdownloadswf
-          strip rencentdownloadswf
+          go build -ldflags="-s -w" -o recentdownloadswf
+          strip recentdownloadswf
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rencentdownloadswf-darwin-arm64
-          path: ./search-for-recentdownloads/rencentdownloadswf
+          path: ./search-for-recentdownloads/recentdownloadswf
