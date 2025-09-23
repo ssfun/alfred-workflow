@@ -284,10 +284,13 @@ func main() {
 	searchAll := false
 	if len(args) > 0 {
 		query = strings.Join(args, " ")
-		if strings.HasSuffix(query, " -a") {
-			query = strings.TrimSuffix(query, " -a")
+		// ✅ 先处理 -a
+		if strings.HasSuffix(strings.TrimSpace(query), "-a") {
+			query = strings.TrimSpace(strings.TrimSuffix(query, "-a"))
 			searchAll = true
 		}
+		// ✅ 去除首尾空格
+		query = strings.TrimSpace(query)
 	}
 
 	// ✅ -a 时强制传 query 给 Feishu
