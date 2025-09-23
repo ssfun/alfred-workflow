@@ -339,8 +339,10 @@ func main() {
 		doc := r.Doc
 		item := AlfredItem{
 			Title:    removeEmTags(doc.Title),
-			Subtitle: fmt.Sprintf("Last opened: %s by %s", time.Unix(doc.OpenTime, 0).Format("2006-01-02 15:04:05"), doc.EditName),
-			Arg:      doc.URL,
+			Subtitle: fmt.Sprintf("Last opened: %s by %s",
+				time.Unix(doc.OpenTime, 0).Format("2006-01-02 15:04:05"),
+				doc.EditName),
+			Arg: doc.URL,
 		}
 		if item.Arg == "" && len(doc.WikiInfos) > 0 {
 			item.Arg = doc.WikiInfos[0]["wiki_url"]
@@ -348,6 +350,18 @@ func main() {
 		item.Icon.Path = getIconPath(doc.Type)
 		items = append(items, item)
 	}
+
+	// ✅ 没结果时给提示
+	if len(items) == 0 {
+		warning := AlfredItem{
+			Title:    "未找到相关文档",
+			Subtitle: "请尝试输入其他关键词，或使用 -a 模式进行全文搜索",
+			Arg:      "",
+		}
+		warning.Icon.Path = "icon.png"
+		items = append(items, warning)
+	}
+
 	output := AlfredOutput{Items: items}
 	j, _ := json.Marshal(output)
 	fmt.Println(string(j))
