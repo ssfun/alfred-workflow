@@ -1,0 +1,44 @@
+# .github/workflows/build.yml
+
+# 工作流名称
+name: Build Search for Feishu Go Binary
+
+# 工作流触发器
+on:
+  # 允许手动在 Actions 页面触发
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build arm64 Binary
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Setup Go Module
+        working-directory: ./search-for-feishu
+        run: |
+          if [ ! -f go.mod ]; then
+            go mod init search-for-feishu
+          fi
+          go mod tidy
+    
+      - name: Build arm64 binary
+        working-directory: ./search-for-feishu
+        run: |
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
+          go build -ldflags="-s -w" -o feishuwf
+          strip feishuwf
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: feishuwf-darwin-arm64
+          path: ./search-for-feishu/feishuwf
