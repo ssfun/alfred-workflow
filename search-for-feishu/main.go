@@ -15,20 +15,18 @@ import (
 )
 
 // ---------------- 多音字字典 ----------------
-var polyphonic = map[rune][]string{}
+var polyphonic = map[rune][]string{
+	'行': {"hang", "xing"},
+	'长': {"chang", "zhang"},
+	'重': {"chong", "zhong"},
+	'乐': {"le", "yue"},
+	'处': {"chu", "cu"},
+}
 
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// 默认内置字典
-		polyphonic = map[rune][]string{
-			'行': {"hang", "xing"},
-			'长': {"chang", "zhang"},
-			'重': {"chong", "zhong"},
-			'乐': {"le", "yue"},
-			'处': {"chu", "cu"},
-		}
-		return
+		return // 保留默认
 	}
 	tmp := make(map[string][]string)
 	if err := json.Unmarshal(data, &tmp); err == nil {
@@ -43,51 +41,84 @@ func loadPolyphonicDict(path string) {
 // ---------------- 拼音缓存 ----------------
 type PinyinCache struct {
 	mu    sync.RWMutex
-	cache map[string][2]string
+	cache map[string]struct {
+		fullComb    []string
+		initialComb []string
+	}
 }
 
 func NewPinyinCache() *PinyinCache {
-	return &PinyinCache{cache: make(map[string][2]string)}
+	return &PinyinCache{cache: make(map[string]struct {
+		fullComb    []string
+		initialComb []string
+	})}
 }
 
 var pyArgs = pinyin.NewArgs()
 
-func (pc *PinyinCache) Get(name string) (string, string) {
+func (pc *PinyinCache) GetAll(name string) ([]string, []string) {
 	pc.mu.RLock()
 	if val, ok := pc.cache[name]; ok {
 		pc.mu.RUnlock()
-		return val[0], val[1]
+		return val.fullComb, val.initialComb
 	}
 	pc.mu.RUnlock()
 
-	var fullParts []string
-	var initials []string
+	var fullOptions [][]string
+	var initialOptions [][]string
+
 	for _, r := range name {
 		if r >= 0x4e00 && r <= 0x9fff {
 			if alts, ok := polyphonic[r]; ok && len(alts) > 0 {
-				// 使用自定义多音字字典
-				fullParts = append(fullParts, alts[0])
-				initials = append(initials, string(alts[0][0]))
+				var fulls []string
+				var initials []string
+				for _, alt := range alts {
+					fulls = append(fulls, alt)
+					initials = append(initials, string(alt[0]))
+				}
+				fullOptions = append(fullOptions, fulls)
+				initialOptions = append(initialOptions, initials)
 			} else {
 				py := pinyin.LazyPinyin(string(r), pyArgs)
 				if len(py) > 0 {
-					fullParts = append(fullParts, py[0])
-					initials = append(initials, string(py[0][0]))
+					fullOptions = append(fullOptions, []string{py[0]})
+					initialOptions = append(initialOptions, []string{string(py[0][0])})
 				}
 			}
 		} else {
-			// 非中文，原样加入
-			fullParts = append(fullParts, string(r))
-			initials = append(initials, string(r))
+			fullOptions = append(fullOptions, []string{string(r)})
+			initialOptions = append(initialOptions, []string{string(r)})
 		}
 	}
-	full := strings.Join(fullParts, "")
-	initialStr := strings.Join(initials, "")
+
+	fullComb := cartesianProduct(fullOptions)
+	initialComb := cartesianProduct(initialOptions)
 
 	pc.mu.Lock()
-	pc.cache[name] = [2]string{full, initialStr}
+	pc.cache[name] = struct {
+		fullComb    []string
+		initialComb []string
+	}{fullComb, initialComb}
 	pc.mu.Unlock()
-	return full, initialStr
+
+	return fullComb, initialComb
+}
+
+func cartesianProduct(arr [][]string) []string {
+	if len(arr) == 0 {
+		return []string{}
+	}
+	res := []string{""}
+	for _, choices := range arr {
+		var tmp []string
+		for _, prefix := range res {
+			for _, c := range choices {
+				tmp = append(tmp, prefix+c)
+			}
+		}
+		res = tmp
+	}
+	return res
 }
 
 // ---------------- 工具函数 ----------------
@@ -139,53 +170,48 @@ func min3(a, b, c int) int {
 	return c
 }
 
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 128 {
-			return false
-		}
-	}
-	return true
-}
-
 // ---------------- 打分函数 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
 	if query == "" {
 		return 0
 	}
-
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 
-	if strings.Contains(nameLower, q) || strings.Contains(name, query) {
-		return 400
+	// 中文直接包含
+	if strings.Contains(nameLower, q) {
+		return 500
 	}
 
-	if isASCII(name) {
-		if nameLower == q {
-			return 500
-		}
-		if strings.HasPrefix(nameLower, q) {
+	// 拼音匹配
+	fullList, initialsList := pc.GetAll(name)
+
+	for _, initials := range initialsList {
+		if initials == q {
+			return 480
+		} else if strings.HasPrefix(initials, q) {
 			return 450
+		} else if strings.Contains(initials, q) {
+			return 320
 		}
-		return 0
+		if fuzzyMatchAllowOneError(q, initials) {
+			return 200
+		}
 	}
 
-	full, initials := pc.Get(name)
+	for _, full := range fullList {
+		if full == q {
+			return 470
+		} else if strings.HasPrefix(full, q) {
+			return 420
+		} else if strings.Contains(full, q) {
+			return 300
+		}
+		if len(q) >= 3 && fuzzyMatchAllowOneError(q, full) {
+			return 180
+		}
+	}
 
-	if strings.EqualFold(q, initials) {
-		return 380
-	} else if looseMatch(q, initials) {
-		return 250
-	}
-	if strings.EqualFold(q, full) {
-		return 350
-	} else if strings.HasPrefix(full, q) {
-		return 300
-	}
-	if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
-		return 80
-	}
 	return 0
 }
 
@@ -273,7 +299,7 @@ func main() {
 		}
 	}
 
-	// 请求 Feishu 接口
+	// 请求 Feishu API
 	req, _ := http.NewRequest("GET", apiURL, nil)
 	req.Header.Set("Cookie", fmt.Sprintf("session=%s; session_list=%s", session, session))
 	q := req.URL.Query()
@@ -303,7 +329,7 @@ func main() {
 	for _, v := range rawDocs {
 		b, _ := json.Marshal(v)
 		var d Document
-		json.Unmarshal(b, &d)
+		_ = json.Unmarshal(b, &d)
 		docs = append(docs, d)
 	}
 
