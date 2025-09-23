@@ -21,7 +21,7 @@ var polyphonic = map[rune][]string{}
 func loadPolyphonicDict(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// 默认多音字表
+		// 默认多音字表（常用）
 		polyphonic = map[rune][]string{
 			'行': {"hang", "xing"},
 			'长': {"chang", "zhang"},
@@ -83,7 +83,7 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	return full, initialStr
 }
 
-// ---------------- 匹配算法 ----------------
+// ---------------- 工具函数 ----------------
 func looseMatch(query, target string) bool {
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
@@ -141,7 +141,16 @@ func min3(a, b, c int) int {
 	return c
 }
 
-// ---------------- 打分函数（核心修复） ----------------
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 128 {
+			return false
+		}
+	}
+	return true
+}
+
+// ---------------- 打分函数 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
 	if query == "" {
 		return 0
@@ -155,7 +164,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		return 400
 	}
 
-	// 2. 英文名逻辑
+	// 2. 英文文件名逻辑
 	if isASCII(name) {
 		if nameLower == q {
 			return 500
@@ -166,7 +175,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		return 0
 	}
 
-	// 3. 中文 -> 拼音逻辑
+	// 3. 中文文件名逻辑 -> 拼音匹配
 	full, initials := pc.Get(name)
 	score := 0
 	if strings.EqualFold(q, initials) {
@@ -186,15 +195,6 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	}
 
 	return score
-}
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 128 {
-			return false
-		}
-	}
-	return true
 }
 
 // ---------------- 结果结构 ----------------
@@ -252,6 +252,23 @@ func getSortMode() string {
 	return ModeScore
 }
 
+// ---------------- 文件类型过滤 ----------------
+func typeFilter(path string, isDir bool, fileType string) bool {
+	if fileType == "" {
+		return true
+	}
+	if fileType == "dir" {
+		return isDir
+	}
+	if fileType == "file" {
+		return !isDir
+	}
+	if strings.HasPrefix(fileType, ".") {
+		return strings.HasSuffix(strings.ToLower(path), fileType)
+	}
+	return true
+}
+
 // ---------------- main ----------------
 func main() {
 	loadPolyphonicDict("polyphonic.json")
@@ -271,6 +288,9 @@ func main() {
 		searchDir = filepath.Join(home, "Downloads")
 	}
 
+	// 文件类型过滤参数
+	fileType := strings.ToLower(os.Getenv("SEARCH_FILETYPE"))
+
 	entries, err := os.ReadDir(searchDir)
 	if err != nil {
 		fmt.Println(`{"items":[{"title":"目录错误","subtitle":"无法访问搜索目录","valid":false}]}`)
@@ -288,8 +308,8 @@ func main() {
 			continue
 		}
 
-		// 文件类型过滤
-		if !fileTypeFilter(e, info) {
+		// ✅ 新的文件类型过滤
+		if !typeFilter(filepath.Join(searchDir, e.Name()), e.IsDir(), fileType) {
 			continue
 		}
 
@@ -337,7 +357,7 @@ func main() {
 			Valid:    false,
 		}
 		item.Icon.Type = "icon"
-		item.Icon.Path = "alert.png"
+		item.Icon.Path = "icon.png"
 		items = append(items, item)
 	} else {
 		for _, r := range results {
@@ -359,20 +379,4 @@ func main() {
 
 	data, _ := json.Marshal(map[string]interface{}{"items": items})
 	fmt.Println(string(data))
-}
-
-// ---------------- 文件类型过滤 ----------------
-func fileTypeFilter(entry os.DirEntry, info os.FileInfo) bool {
-	ft := strings.ToLower(os.Getenv("SEARCH_FILETYPE")) // 例如: dir, file, .pdf, .png
-	if ft == "" {
-		return true
-	}
-	switch ft {
-	case "dir":
-		return entry.IsDir()
-	case "file":
-		return !entry.IsDir()
-	default:
-		return strings.HasSuffix(strings.ToLower(info.Name()), ft)
-	}
 }
