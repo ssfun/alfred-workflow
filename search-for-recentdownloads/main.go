@@ -34,9 +34,8 @@ func loadPolyphonicDict(path string) {
 	tmp := make(map[string][]string)
 	if err := json.Unmarshal(data, &tmp); err == nil {
 		for k, v := range tmp {
-			runes := []rune(k)
-			if len(runes) > 0 {
-				polyphonic[runes[0]] = v
+			if len([]rune(k)) > 0 {
+				polyphonic[[]rune(k)[0]] = v
 			}
 		}
 	}
@@ -142,51 +141,60 @@ func min3(a, b, c int) int {
 	return c
 }
 
-// ---------------- 打分函数 ----------------
+// ---------------- 打分函数（核心修复） ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
-    if query == "" {
-        return 0
-    }
+	if query == "" {
+		return 0
+	}
 
-    q := strings.ToLower(query)
-    nameLower := strings.ToLower(name)
+	q := strings.ToLower(query)
+	nameLower := strings.ToLower(name)
 
-    // 1. 直接包含（支持中文）
-    if strings.Contains(nameLower, q) || strings.Contains(name, query) {
-        return 400
-    }
+	// 1. 直接包含（支持中文/英文）
+	if strings.Contains(nameLower, q) || strings.Contains(name, query) {
+		return 400
+	}
 
-    // 2. 英文名逻辑
-    if isASCII(name) {
-        if nameLower == q {
-            return 500
-        }
-        if strings.HasPrefix(nameLower, q) {
-            return 450
-        }
-        return 0
-    }
+	// 2. 英文名逻辑
+	if isASCII(name) {
+		if nameLower == q {
+			return 500
+		}
+		if strings.HasPrefix(nameLower, q) {
+			return 450
+		}
+		return 0
+	}
 
-    // 3. 中文 -> 拼音逻辑
-    full, initials := pc.Get(name)
-    score := 0
-    if strings.EqualFold(q, initials) {
-        score = 380
-    } else if looseMatch(q, initials) {
-        score = 250
-    }
+	// 3. 中文 -> 拼音逻辑
+	full, initials := pc.Get(name)
+	score := 0
+	if strings.EqualFold(q, initials) {
+		score = 380
+	} else if looseMatch(q, initials) {
+		score = 250
+	}
 
-    if strings.EqualFold(q, full) {
-        score = 350
-    } else if strings.HasPrefix(full, q) {
-        score = 300
-    }
+	if strings.EqualFold(q, full) {
+		score = 350
+	} else if strings.HasPrefix(full, q) {
+		score = 300
+	}
 
-    if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
-        score = 80
-    }
+	if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
+		score = 80
+	}
 
-    return score
+	return score
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 128 {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------- 结果结构 ----------------
@@ -237,7 +245,7 @@ func getSortMode() string {
 		ModeFilenameDesc,
 	}
 	for _, m := range modes {
-		if os.Getenv(m) == keyword {
+		if os.Getenv(m) == keyword { // Alfred 配置里：变量名=模式，值=keyword
 			return m
 		}
 	}
@@ -250,6 +258,7 @@ func main() {
 
 	mode := getSortMode()
 
+	// 搜索词
 	query := ""
 	if len(os.Args) > 1 {
 		query = strings.ToLower(strings.TrimSpace(os.Args[1]))
@@ -279,15 +288,15 @@ func main() {
 			continue
 		}
 
-		// 文件类型过滤（根据 SEARCH_FILETYPE 环境变量）
+		// 文件类型过滤
 		if !fileTypeFilter(e, info) {
 			continue
 		}
 
 		score := matchScore(query, e.Name(), pc)
-        if query == "" {
-            score = 100 // 如果用户没有输入 query，默认给一个正分，让结果展示出来
-        }
+		if query == "" {
+			score = 100 // 没输入 query 时，全部展示
+		}
 		if score > 0 {
 			results = append(results, Result{
 				Score:   score,
@@ -328,7 +337,7 @@ func main() {
 			Valid:    false,
 		}
 		item.Icon.Type = "icon"
-		item.Icon.Path = "icon.png"
+		item.Icon.Path = "alert.png"
 		items = append(items, item)
 	} else {
 		for _, r := range results {
@@ -340,7 +349,8 @@ func main() {
 			}
 			// Subtitle 只显示大小 + 修改时间
 			item.Subtitle = fmt.Sprintf("%d bytes | 修改时间: %s",
-				r.Size, r.ModTime.Format("2006-01-02 15:04"))
+				r.Size,
+				r.ModTime.Format("2006-01-02 15:04"))
 			item.Icon.Type = "fileicon"
 			item.Icon.Path = r.Path
 			items = append(items, item)
@@ -353,7 +363,7 @@ func main() {
 
 // ---------------- 文件类型过滤 ----------------
 func fileTypeFilter(entry os.DirEntry, info os.FileInfo) bool {
-	ft := strings.ToLower(os.Getenv("SEARCH_FILETYPE")) // dir,file,.pdf,.png
+	ft := strings.ToLower(os.Getenv("SEARCH_FILETYPE")) // 例如: dir, file, .pdf, .png
 	if ft == "" {
 		return true
 	}
