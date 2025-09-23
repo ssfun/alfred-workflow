@@ -301,18 +301,36 @@ func parseQueryArgs() (query string, fileType string) {
 	return strings.Join(queryParts, " "), fileType
 }
 
+// expandPath 展开 ~ 为用户主目录
+func expandPath(path string) string {
+    if strings.HasPrefix(path, "~") {
+        home, err := os.UserHomeDir()
+        if err != nil {
+            return path
+        }
+        if path == "~" {
+            return home
+        }
+        // 去掉 "~/"，拼接
+        return filepath.Join(home, path[2:])
+    }
+    return path
+}
+
 // ---------------- main ----------------
 func main() {
-	loadPolyphonicDict("polyphonic.json")
-	mode := getSortMode()
+    loadPolyphonicDict("polyphonic.json")
+    mode := getSortMode()
 
-	query, fileType := parseQueryArgs()
+    query, fileType := parseQueryArgs()
 
-	searchDir := os.Getenv("SEARCH_DIR")
-	if searchDir == "" {
-		home, _ := os.UserHomeDir()
-		searchDir = filepath.Join(home, "Downloads")
-	}
+    searchDir := os.Getenv("SEARCH_DIR")
+    if searchDir == "" {
+        home, _ := os.UserHomeDir()
+        searchDir = filepath.Join(home, "Downloads")
+    } else {
+        searchDir = expandPath(searchDir) // ✅ 支持 ~
+    }
 
 	entries, err := os.ReadDir(searchDir)
 	if err != nil {
