@@ -154,6 +154,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 
+	// 中文或英文直接匹配
 	if strings.Contains(nameLower, q) || strings.Contains(name, query) {
 		return 400
 	}
@@ -169,19 +170,30 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	}
 
 	full, initials := pc.Get(name)
+
+	// 首字母拼音匹配
 	if strings.EqualFold(q, initials) {
 		return 380
 	} else if looseMatch(q, initials) {
 		return 250
+	} else if strings.Contains(initials, q) { // ✅ 新增：支持子串
+		return 240
 	}
+
+	// 全拼匹配
 	if strings.EqualFold(q, full) {
 		return 350
 	} else if strings.HasPrefix(full, q) {
 		return 300
+	} else if strings.Contains(full, q) { // ✅ 新增：全拼子串
+		return 280
 	}
+
+	// 模糊拼音
 	if len(q) >= 4 && fuzzyMatchAllowOneError(q, full) {
 		return 80
 	}
+
 	return 0
 }
 
