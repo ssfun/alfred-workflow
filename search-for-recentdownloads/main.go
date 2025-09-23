@@ -123,7 +123,12 @@ func fuzzyMatchAllowOneError(query, target string) bool {
 	return dp[m][n] <= 1
 }
 
-func abs(x int) int { if x < 0 { return -x }; return x }
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
 func min3(a, b, c int) int {
 	if a < b {
 		if a < c {
@@ -142,7 +147,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 
-	// 英文/ASCII文件
+	// 英文/ASCII 文件
 	if isASCII(name) {
 		if nameLower == q {
 			return 500
@@ -217,13 +222,12 @@ const (
 	ModeFilenameDesc = "filename_desc"
 )
 
-// ---------------- 从环境配置里找到模式 ----------------
+// ---------------- 从环境配置找到模式 ----------------
 func getSortMode() string {
 	keyword := os.Getenv("alfred_workflow_keyword")
 	if keyword == "" {
 		return ModeScore
 	}
-	// 所有支持的模式
 	modes := []string{
 		ModeModTimeDesc,
 		ModeModTimeAsc,
@@ -248,7 +252,7 @@ func main() {
 
 	query := ""
 	if len(os.Args) > 1 {
-		query = strings.ToLower(os.Args[1])
+		query = strings.ToLower(strings.TrimSpace(os.Args[1]))
 	}
 
 	// 搜索目录
@@ -274,6 +278,12 @@ func main() {
 		if err != nil {
 			continue
 		}
+
+		// 文件类型过滤（根据 SEARCH_FILETYPE 环境变量）
+		if !fileTypeFilter(e, info) {
+			continue
+		}
+
 		score := 0
 		if query == "" || strings.Contains(strings.ToLower(e.Name()), query) {
 			score = matchScore(query, e.Name(), pc)
@@ -309,7 +319,7 @@ func main() {
 		}
 	})
 
-	// 转 JSON 输出
+	// 输出 JSON 给 Alfred
 	items := []AlfredItem{}
 	if len(results) == 0 {
 		item := AlfredItem{
@@ -318,7 +328,7 @@ func main() {
 			Valid:    false,
 		}
 		item.Icon.Type = "icon"
-		item.Icon.Path = "alert.png"
+		item.Icon.Path = "icon.png"
 		items = append(items, item)
 	} else {
 		for _, r := range results {
@@ -328,9 +338,9 @@ func main() {
 				Arg:   r.Path,
 				Valid: true,
 			}
-			parent := filepath.Dir(r.Path)
-			item.Subtitle = fmt.Sprintf("%s | %d bytes | 修改: %s",
-				parent, r.Size, r.ModTime.Format("2006-01-02 15:04"))
+			// Subtitle 只显示大小 + 修改时间
+			item.Subtitle = fmt.Sprintf("%d bytes | 修改时间: %s",
+				r.Size, r.ModTime.Format("2006-01-02 15:04"))
 			item.Icon.Type = "fileicon"
 			item.Icon.Path = r.Path
 			items = append(items, item)
@@ -339,4 +349,20 @@ func main() {
 
 	data, _ := json.Marshal(map[string]interface{}{"items": items})
 	fmt.Println(string(data))
+}
+
+// ---------------- 文件类型过滤 ----------------
+func fileTypeFilter(entry os.DirEntry, info os.FileInfo) bool {
+	ft := strings.ToLower(os.Getenv("SEARCH_FILETYPE")) // dir,file,.pdf,.png
+	if ft == "" {
+		return true
+	}
+	switch ft {
+	case "dir":
+		return entry.IsDir()
+	case "file":
+		return !entry.IsDir()
+	default:
+		return strings.HasSuffix(strings.ToLower(info.Name()), ft)
+	}
 }
