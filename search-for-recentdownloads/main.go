@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mozillazg/go-pinyin"
@@ -138,6 +139,27 @@ func isASCII(s string) bool {
 	return true
 }
 
+// ---------------- 文件大小格式化 ----------------
+func formatSize(size int64) string {
+	if size < 1024 {
+		return fmt.Sprintf("%d B", size)
+	}
+	kb := float64(size) / 1024
+	if kb < 1024 {
+		return fmt.Sprintf("%.1f KB", kb)
+	}
+	mb := kb / 1024
+	if mb < 1024 {
+		return fmt.Sprintf("%.1f MB", mb)
+	}
+	gb := mb / 1024
+	if gb < 1024 {
+		return fmt.Sprintf("%.1f GB", gb)
+	}
+	tb := gb / 1024
+	return fmt.Sprintf("%.1f TB", tb)
+}
+
 // ---------------- 打分函数 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
 	if query == "" { return 0 }
@@ -145,12 +167,10 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 
-	// 中文/英文直接包含
 	if strings.Contains(nameLower, q) || strings.Contains(name, query) {
 		return 400
 	}
 
-	// 英文文件名逻辑
 	if isASCII(name) {
 		if nameLower == q {
 			return 500
@@ -161,7 +181,6 @@ func matchScore(query, name string, pc *PinyinCache) int {
 		return 0
 	}
 
-	// 中文拼音逻辑
 	full, initials := pc.Get(name)
 	if strings.EqualFold(q, initials) {
 		return 380
@@ -181,12 +200,13 @@ func matchScore(query, name string, pc *PinyinCache) int {
 
 // ---------------- 结果结构 ----------------
 type Result struct {
-	Score   int
-	Path    string
-	Name    string
-	IsDir   bool
-	ModTime time.Time
-	Size    int64
+	Score      int
+	Path       string
+	Name       string
+	IsDir      bool
+	ModTime    time.Time
+	Size       int64
+	CreateTime time.Time
 }
 
 type AlfredItem struct {
@@ -201,6 +221,14 @@ type AlfredItem struct {
 	} `json:"icon"`
 }
 
+// ---------------- 创建时间 (macOS) ----------------
+func getCreateTime(path string, info os.FileInfo) time.Time {
+	stat := info.Sys().(*syscall.Stat_t)
+	sec := stat.Birthtimespec.Sec
+	nsec := stat.Birthtimespec.Nsec
+	return time.Unix(sec, nsec)
+}
+
 // ---------------- 模式枚举 ----------------
 const (
 	ModeScore        = "score"
@@ -212,7 +240,7 @@ const (
 	ModeFilenameDesc = "filename_desc"
 )
 
-// ---------------- 从环境配置找到模式 ----------------
+// ---------------- 排序模式 ----------------
 func getSortMode() string {
 	keyword := os.Getenv("alfred_workflow_keyword")
 	if keyword == "" { return ModeScore }
@@ -249,7 +277,7 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
-// ---------------- 解析 query 支持 .dir/.file/.pdf 前后皆可 ----------------
+// ---------------- 解析 query (.dir/.file/.pdf 前后均可) ----------------
 func parseQueryArgs() (query string, fileType string) {
 	if len(os.Args) <= 1 {
 		return "", ""
@@ -266,7 +294,7 @@ func parseQueryArgs() (query string, fileType string) {
 		} else if lp == ".file" {
 			fileType = "file"
 		} else if strings.HasPrefix(lp, ".") {
-			fileType = lp // .pdf, .png 等
+			fileType = lp
 		} else {
 			queryParts = append(queryParts, lp)
 		}
@@ -279,7 +307,6 @@ func main() {
 	loadPolyphonicDict("polyphonic.json")
 	mode := getSortMode()
 
-	// 支持 .dir 项目 和 项目 .dir
 	query, fileType := parseQueryArgs()
 
 	searchDir := os.Getenv("SEARCH_DIR")
@@ -301,7 +328,6 @@ func main() {
 		info, err := e.Info()
 		if err != nil { continue }
 
-		// 类型过滤
 		if !typeFilter(filepath.Join(searchDir, e.Name()), e.IsDir(), fileType) {
 			continue
 		}
@@ -310,17 +336,18 @@ func main() {
 		if query == "" { score = 100 }
 		if score > 0 {
 			results = append(results, Result{
-				Score:   score,
-				Path:    filepath.Join(searchDir, e.Name()),
-				Name:    e.Name(),
-				IsDir:   e.IsDir(),
-				ModTime: info.ModTime(),
-				Size:    info.Size(),
+				Score:      score,
+				Path:       filepath.Join(searchDir, e.Name()),
+				Name:       e.Name(),
+				IsDir:      e.IsDir(),
+				ModTime:    info.ModTime(),
+				Size:       info.Size(),
+				CreateTime: getCreateTime(filepath.Join(searchDir, e.Name()), info),
 			})
 		}
 	}
 
-	// 排序：先按 score，再按 mode
+	// 排序
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score != results[j].Score {
 			return results[i].Score > results[j].Score
@@ -330,6 +357,10 @@ func main() {
 			return results[i].ModTime.After(results[j].ModTime)
 		case ModeModTimeAsc:
 			return results[i].ModTime.Before(results[j].ModTime)
+		case ModeAddTimeDesc:
+			return results[i].CreateTime.After(results[j].CreateTime)
+		case ModeAddTimeAsc:
+			return results[i].CreateTime.Before(results[j].CreateTime)
 		case ModeFilenameAsc:
 			return strings.ToLower(results[i].Name) < strings.ToLower(results[j].Name)
 		case ModeFilenameDesc:
@@ -339,7 +370,7 @@ func main() {
 		}
 	})
 
-	// 输出结果给 Alfred
+	// 输出
 	items := []AlfredItem{}
 	if len(results) == 0 {
 		item := AlfredItem{
@@ -358,8 +389,8 @@ func main() {
 				Arg:   r.Path,
 				Valid: true,
 			}
-			item.Subtitle = fmt.Sprintf("%d bytes | 修改时间: %s",
-				r.Size, r.ModTime.Format("2006-01-02 15:04"))
+			item.Subtitle = fmt.Sprintf("%s | 修改时间: %s",
+				formatSize(r.Size), r.ModTime.Format("2006-01-02 15:04"))
 			item.Icon.Type = "fileicon"
 			item.Icon.Path = r.Path
 			items = append(items, item)
