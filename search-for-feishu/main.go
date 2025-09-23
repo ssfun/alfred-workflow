@@ -15,29 +15,12 @@ import (
 )
 
 // ---------------- 多音字字典 ----------------
-var polyphonic = map[rune][]string{}
-
-func loadPolyphonicDict(path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		// 默认字典
-		polyphonic = map[rune][]string{
-			'行': {"hang", "xing"},
-			'长': {"chang", "zhang"},
-			'重': {"chong", "zhong"},
-			'乐': {"le", "yue"},
-			'处': {"chu", "cu"},
-		}
-		return
-	}
-	tmp := make(map[string][]string)
-	if err := json.Unmarshal(data, &tmp); err == nil {
-		for k, v := range tmp {
-			if len([]rune(k)) > 0 {
-				polyphonic[[]rune(k)[0]] = v
-			}
-		}
-	}
+var polyphonic = map[rune][]string{
+	'行': {"hang", "xing"},
+	'长': {"chang", "zhang"},
+	'重': {"chong", "zhong"},
+	'乐': {"le", "yue"},
+	'处': {"chu", "cu"},
 }
 
 // ---------------- 拼音缓存 ----------------
@@ -75,8 +58,9 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 				}
 			}
 		} else {
-			fullParts = append(fullParts, string(r))
-			initials = append(initials, string(r))
+			// 非中文字符直接当作小写
+			fullParts = append(fullParts, strings.ToLower(string(r)))
+			initials = append(initials, strings.ToLower(string(r)))
 		}
 	}
 	full := strings.Join(fullParts, "")
@@ -89,6 +73,8 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 
 // ---------------- 辅助函数 ----------------
 func looseMatch(query, target string) bool {
+	query = strings.ToLower(query)
+	target = strings.ToLower(target)
 	i, j := 0, 0
 	for i < len(query) && j < len(target) {
 		if query[i] == target[j] {
@@ -136,15 +122,6 @@ func min3(a, b, c int) int {
 	return c
 }
 
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 128 {
-			return false
-		}
-	}
-	return true
-}
-
 // ---------------- 打分函数 ----------------
 func matchScore(query, name string, pc *PinyinCache) int {
 	if query == "" {
@@ -154,38 +131,28 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	q := strings.ToLower(query)
 	nameLower := strings.ToLower(name)
 
-	// 中文或英文直接匹配
-	if strings.Contains(nameLower, q) || strings.Contains(name, query) {
+	// 中文或原文直接包含
+	if strings.Contains(nameLower, q) {
 		return 400
-	}
-
-	if isASCII(name) {
-		if nameLower == q {
-			return 500
-		}
-		if strings.HasPrefix(nameLower, q) {
-			return 450
-		}
-		return 0
 	}
 
 	full, initials := pc.Get(name)
 
-	// 首字母拼音匹配
-	if strings.EqualFold(q, initials) {
+	// 首字母匹配
+	if q == initials {
 		return 380
 	} else if looseMatch(q, initials) {
 		return 250
-	} else if strings.Contains(initials, q) { // ✅ 新增：支持子串
+	} else if strings.Contains(initials, q) {
 		return 240
 	}
 
 	// 全拼匹配
-	if strings.EqualFold(q, full) {
+	if q == full {
 		return 350
 	} else if strings.HasPrefix(full, q) {
 		return 300
-	} else if strings.Contains(full, q) { // ✅ 新增：全拼子串
+	} else if strings.Contains(full, q) {
 		return 280
 	}
 
@@ -197,7 +164,7 @@ func matchScore(query, name string, pc *PinyinCache) int {
 	return 0
 }
 
-// ---------------- Feishu 文档/输出 ----------------
+// ---------------- Feishu 文档结构 ----------------
 type Document struct {
 	Title     string              `json:"title"`
 	Preview   string              `json:"preview,omitempty"`
@@ -270,7 +237,7 @@ func main() {
 		return
 	}
 
-	// 参数处理
+	// 参数
 	args := os.Args[1:]
 	query := ""
 	searchAll := false
@@ -282,14 +249,9 @@ func main() {
 		}
 	}
 
-	// 请求飞书 API
+	// 请求 Feishu API （✅ 不带用户输入 query！）
 	req, _ := http.NewRequest("GET", apiURL, nil)
 	req.Header.Set("Cookie", fmt.Sprintf("session=%s; session_list=%s", session, session))
-	q := req.URL.Query()
-	if query != "" {
-		q.Add("query", query)
-	}
-	req.URL.RawQuery = q.Encode()
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -316,7 +278,7 @@ func main() {
 		docs = append(docs, d)
 	}
 
-	// 搜索过滤 + 排序
+	// 本地搜索过滤
 	pc := NewPinyinCache()
 	type scoredDoc struct {
 		Doc   Document
@@ -335,6 +297,7 @@ func main() {
 		}
 	}
 
+	// 排序：打分优先，其次按 open_time
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score == results[j].Score {
 			return results[i].Doc.OpenTime > results[j].Doc.OpenTime
