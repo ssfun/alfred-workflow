@@ -221,8 +221,8 @@ type AlfredItem struct {
 	} `json:"icon"`
 }
 
-// ---------------- 创建时间 (macOS) ----------------
-func getCreateTime(path string, info os.FileInfo) time.Time {
+// ---------------- 创建时间 (macOS Birthtime) ----------------
+func getCreateTime(info os.FileInfo) time.Time {
 	stat := info.Sys().(*syscall.Stat_t)
 	sec := stat.Birthtimespec.Sec
 	nsec := stat.Birthtimespec.Nsec
@@ -277,12 +277,11 @@ func typeFilter(path string, isDir bool, fileType string) bool {
 	return true
 }
 
-// ---------------- 解析 query (.dir/.file/.pdf 前后均可) ----------------
+// ---------------- 解析 query (.dir/.file/.pdf 任意位置) ----------------
 func parseQueryArgs() (query string, fileType string) {
 	if len(os.Args) <= 1 {
 		return "", ""
 	}
-
 	raw := strings.TrimSpace(os.Args[1])
 	parts := strings.Fields(raw)
 
@@ -342,7 +341,7 @@ func main() {
 				IsDir:      e.IsDir(),
 				ModTime:    info.ModTime(),
 				Size:       info.Size(),
-				CreateTime: getCreateTime(filepath.Join(searchDir, e.Name()), info),
+				CreateTime: getCreateTime(info), // ✅ 真正使用 Birthtime
 			})
 		}
 	}
@@ -389,8 +388,18 @@ func main() {
 				Arg:   r.Path,
 				Valid: true,
 			}
-			item.Subtitle = fmt.Sprintf("%s | 修改时间: %s",
-				formatSize(r.Size), r.ModTime.Format("2006-01-02 15:04"))
+
+			var timeLabel string
+			switch mode {
+			case ModeAddTimeAsc, ModeAddTimeDesc:
+				timeLabel = fmt.Sprintf("添加时间: %s", r.CreateTime.Format("2006-01-02 15:04"))
+			default: // 包括 ModTime 和 Filename 模式
+				timeLabel = fmt.Sprintf("修改时间: %s", r.ModTime.Format("2006-01-02 15:04"))
+			}
+
+			item.Subtitle = fmt.Sprintf("%s | %s",
+				formatSize(r.Size), timeLabel)
+
 			item.Icon.Type = "fileicon"
 			item.Icon.Path = r.Path
 			items = append(items, item)
