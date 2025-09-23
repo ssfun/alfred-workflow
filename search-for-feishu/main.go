@@ -283,23 +283,14 @@ func main() {
 	query := ""
 	searchAll := false
 	if len(args) > 0 {
-		// ✅ 过滤掉 argv 里的 "" 空 token
-		parts := []string{}
-		for _, s := range args {
-			if strings.TrimSpace(s) != "" {
-				parts = append(parts, s)
-			}
-		}
-		query = strings.Join(parts, " ")
+		// ✅ 先整体 TrimSpace
+		query = strings.TrimSpace(strings.Join(args, " "))
 
-		// ✅ 处理 -a 模式
-		if strings.HasSuffix(strings.TrimSpace(query), "-a") {
+		// ✅ 单独处理 -a
+		if strings.HasSuffix(query, "-a") {
 			query = strings.TrimSpace(strings.TrimSuffix(query, "-a"))
 			searchAll = true
 		}
-
-		// ✅ 最终 TrimSpace
-		query = strings.TrimSpace(query)
 	}
 
 	debugPrint("最终解析 query=%q searchAll=%v", query, searchAll)
@@ -372,7 +363,7 @@ func main() {
 			Subtitle: "请尝试输入其他关键词，或使用 -a 模式进行全文搜索",
 			Arg:      "",
 		}
-		warning.Icon.Path = "warning.png"
+		warning.Icon.Path = "icon.png"
 		items = append(items, warning)
 	}
 
