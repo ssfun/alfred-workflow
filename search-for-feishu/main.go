@@ -283,15 +283,26 @@ func main() {
 	query := ""
 	searchAll := false
 	if len(args) > 0 {
-		query = strings.Join(args, " ")
-		// ✅ 先处理 -a
+		// ✅ 过滤掉 argv 里的 "" 空 token
+		parts := []string{}
+		for _, s := range args {
+			if strings.TrimSpace(s) != "" {
+				parts = append(parts, s)
+			}
+		}
+		query = strings.Join(parts, " ")
+
+		// ✅ 处理 -a 模式
 		if strings.HasSuffix(strings.TrimSpace(query), "-a") {
 			query = strings.TrimSpace(strings.TrimSuffix(query, "-a"))
 			searchAll = true
 		}
-		// ✅ 去除首尾空格
+
+		// ✅ 最终 TrimSpace
 		query = strings.TrimSpace(query)
 	}
+
+	debugPrint("最终解析 query=%q searchAll=%v", query, searchAll)
 
 	// ✅ -a 时强制传 query 给 Feishu
 	useQuery := false
@@ -361,7 +372,7 @@ func main() {
 			Subtitle: "请尝试输入其他关键词，或使用 -a 模式进行全文搜索",
 			Arg:      "",
 		}
-		warning.Icon.Path = "icon.png"
+		warning.Icon.Path = "warning.png"
 		items = append(items, warning)
 	}
 
