@@ -79,6 +79,16 @@ func (pc *PinyinCache) Get(name string) (string, string) {
 	return full, initialStr
 }
 
+// ---------------- sanitize query ----------------
+func sanitizeQuery(q string) string {
+	q = strings.TrimSpace(q)
+	// 去掉末尾的反斜杠（Alfred 在末尾空格时可能传递 "App\")
+	if strings.HasSuffix(q, "\\") {
+		q = strings.TrimSuffix(q, "\\")
+	}
+	return strings.TrimSpace(q)
+}
+
 // ---------------- 匹配辅助函数 ----------------
 func looseMatch(query, target string) bool {
 	query = strings.ToLower(query)
@@ -280,19 +290,31 @@ func main() {
 	}
 
 	args := os.Args[1:]
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] 原始 argv: %#v\n", args)
+	}
+
 	query := ""
 	searchAll := false
 	if len(args) > 0 {
-		// ✅ 先整体 TrimSpace
-		query = strings.TrimSpace(strings.Join(args, " "))
+		// ✅ 过滤掉 argv 里的 "" 空 token
+		parts := []string{}
+		for _, s := range args {
+			if strings.TrimSpace(s) != "" {
+				parts = append(parts, s)
+			}
+		}
+		query = strings.Join(parts, " ")
 
-		// ✅ 单独处理 -a
-		if strings.HasSuffix(query, "-a") {
+		// ✅ 处理 -a 模式
+		if strings.HasSuffix(strings.TrimSpace(query), "-a") {
 			query = strings.TrimSpace(strings.TrimSuffix(query, "-a"))
 			searchAll = true
 		}
-	}
 
+		// ✅ 最终 sanitize
+		query = sanitizeQuery(query)
+	}
 	debugPrint("最终解析 query=%q searchAll=%v", query, searchAll)
 
 	// ✅ -a 时强制传 query 给 Feishu
