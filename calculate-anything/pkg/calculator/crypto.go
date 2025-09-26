@@ -1,5 +1,5 @@
 // calculate-anything/pkg/calculators/crypto.go
-package calculators
+package calculator
 
 import (
 	"calculate-anything/pkg/alfred"
