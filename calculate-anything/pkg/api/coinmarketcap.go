@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	// 修正：移除了 "aw" 这个未使用的别名
 	"github.com/deanishe/awgo"
 )
 
@@ -46,16 +47,15 @@ func GetCryptoConversion(wf *awgo.Workflow, apiKey string, amount float64, fromC
 
 	fromCrypto = strings.ToUpper(fromCrypto)
 	toFiat = strings.ToUpper(toFiat)
-
 	cacheKey := fmt.Sprintf(cryptoCacheKey, fromCrypto, toFiat)
 
+	// 修正：使用 awgo.Workflow
 	if wf.Cache.Exists(cacheKey) && !wf.Cache.Expired(cacheKey, cacheDuration) {
 		var resp CMCResponse
 		if err := wf.Cache.LoadJSON(cacheKey, &resp); err == nil {
-			cachedQuote, ok := resp.Data.Quote[toFiat]
-			if ok {
+			if cachedQuote, ok := resp.Data.Quote[toFiat]; ok {
 				resp.Data.Amount = amount
-				cachedQuote.Price = cachedQuote.Price * amount
+				cachedQuote.Price *= amount
 				resp.Data.Quote[toFiat] = cachedQuote
 				return &resp, nil
 			}
@@ -66,13 +66,11 @@ func GetCryptoConversion(wf *awgo.Workflow, apiKey string, amount float64, fromC
 	if err != nil {
 		return nil, err
 	}
-
 	q := req.URL.Query()
 	q.Add("amount", "1")
 	q.Add("symbol", fromCrypto)
 	q.Add("convert", toFiat)
 	req.URL.RawQuery = q.Encode()
-
 	req.Header.Set("Accepts", "application/json")
 	req.Header.Set("X-CMC_PRO_API_KEY", apiKey)
 
@@ -87,22 +85,20 @@ func GetCryptoConversion(wf *awgo.Workflow, apiKey string, amount float64, fromC
 	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
 		return nil, fmt.Errorf("解析 API 响应失败: %w", err)
 	}
-
 	if apiResponse.Status.ErrorCode != 0 {
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Status.ErrorMessage)
 	}
 
-	// 修正：awgo 库中使用 Logger() 方法获取日志记录器。
+	// 修正：使用 Logger() 方法获取日志记录器
 	if err := wf.Cache.StoreJSON(cacheKey, apiResponse); err != nil {
 		wf.Logger().Printf("无法缓存加密货币数据: %s", err)
 	}
-	
-	baseQuote, ok := apiResponse.Data.Quote[toFiat]
-	if ok {
+
+	if baseQuote, ok := apiResponse.Data.Quote[toFiat]; ok {
 		apiResponse.Data.Amount = amount
-		baseQuote.Price = baseQuote.Price * amount
+		baseQuote.Price *= amount
 		apiResponse.Data.Quote[toFiat] = baseQuote
 	}
-	
+
 	return &apiResponse, nil
 }
