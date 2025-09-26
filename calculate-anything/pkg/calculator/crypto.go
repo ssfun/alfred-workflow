@@ -1,11 +1,11 @@
-// calculate-anything-go/pkg/calculators/crypto.go
+// calculate-anything/pkg/calculators/crypto.go
 package calculators
 
 import (
-	"calculate-anything-go/pkg/alfred"
-	"calculate-anything-go/pkg/api"
-	"calculate-anything-go/pkg/config"
-	"calculate-anything-go/pkg/parser"
+	"calculate-anything/pkg/alfred"
+	"calculate-anything/pkg/api"
+	"calculate-anything/pkg/config"
+	"calculate-anything/pkg/parser"
 	"fmt"
 	"strconv"
 	"time"
