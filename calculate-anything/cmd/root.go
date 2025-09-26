@@ -1,11 +1,11 @@
-// calculate-anything-go/cmd/root.go
+// calculate-anything/cmd/root.go
 package cmd
 
 import (
-	"calculate-anything-go/pkg/alfred"
-	"calculate-anything-go/pkg/calculators"
-	"calculate-anything-go/pkg/config"
-	"calculate-anything-go/pkg/parser"
+	"calculate-anything/pkg/alfred"
+	"calculate-anything/pkg/calculators"
+	"calculate-anything/pkg/config"
+	"calculate-anything/pkg/parser"
 	"fmt"
 	"github.com/deanishe/awgo"
 	"strings"
