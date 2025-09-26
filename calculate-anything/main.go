@@ -1,4 +1,4 @@
-// calculate-anything-go/main.go
+// calculate-anything/main.go
 package main
 
 import (
