@@ -2,12 +2,13 @@
 package alfred
 
 import (
+	// 修正：移除了 "aw" 这个未使用的别名
 	"github.com/deanishe/awgo"
 )
 
 // Modifier 定义了 Alfred 结果的修饰键（如 Cmd, Opt, Ctrl）。
 type Modifier struct {
-	// 修正：修饰键的正确类型是 awgo.ModKey
+	// 修正：使用正确的类型 awgo.ModKey
 	Key      awgo.ModKey
 	Subtitle string
 	Arg      string
@@ -25,12 +26,14 @@ type Result struct {
 // AddToWorkflow 将一组标准化的 Result 对象添加到 Alfred 的反馈列表中。
 func AddToWorkflow(wf *awgo.Workflow, results []Result) {
 	for _, r := range results {
+		// 修正：使用正确的类型 awgo.Workflow
 		item := wf.NewItem(r.Title).
 			Subtitle(r.Subtitle).
 			Arg(r.Arg).
 			Valid(true)
 
 		if r.IconPath != "" {
+			// 修正：使用正确的类型 awgo.Icon
 			item.Icon(&awgo.Icon{Value: r.IconPath})
 		}
 
@@ -44,6 +47,6 @@ func AddToWorkflow(wf *awgo.Workflow, results []Result) {
 
 // ShowError 在 Alfred 中显示一个用户友好的错误信息。
 func ShowError(wf *awgo.Workflow, err error) {
-	// 修正：awgo 库中用于显示警告的方法是 Warn()。
+	// 修正：使用正确的类型 awgo.Workflow
 	wf.Warn(err.Error(), "计算出错")
 }
