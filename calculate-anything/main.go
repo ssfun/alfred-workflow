@@ -12,7 +12,7 @@ var wf *aw.Workflow
 
 // init 函数在 main 函数执行前被调用，用于初始化 workflow 对象。
 func init() {
-	wf = aw.New(aw.HelpURL("https://github.com/ssfun/alfred-workflow/calculate-anything"), aw.Update(aw.GitHub("ssfun/alfred-workflow/calculate-anything")))
+	wf = aw.New(aw.HelpURL("https://github.com/ssfun/alfred-workflow/calculate-anything"))
 }
 
 // run 是我们工作流的真正入口点。
