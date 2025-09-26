@@ -34,7 +34,7 @@ jobs:
         working-directory: ./calculate-anything
         run: |
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
-          go build -ldflags="-s -w" -o calculatewf
+          go build -o calculatewf
           strip calculatewf
 
       - name: Upload artifact
