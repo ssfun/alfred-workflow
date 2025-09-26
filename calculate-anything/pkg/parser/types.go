@@ -1,7 +1,7 @@
 // calculate-anything/pkg/parser/types.go
 package parser
 
-// QueryType 定义了查询的类型
+// QueryType defines the type of query detected by the parser.
 type QueryType int
 
 const (
@@ -16,14 +16,14 @@ const (
 	VATQuery
 )
 
-// ParsedQuery 是解析自然语言查询后的结果
+// ParsedQuery is the structured result after parsing a natural language query.
 type ParsedQuery struct {
-	Type        QueryType // 查询类型
-	Input       string    // 原始输入
-	Amount      float64   // 数值
-	From        string    // 源单位/货币
-	To          string    // 目标单位/货币
-	Action      string    // 附加动作 (e.g., "+", "-")
-	Percent     float64   // 百分比值
-	BaseValue   float64   // 百分比计算的基础值
+	Type      QueryType // The type of query
+	Input     string    // The original input string
+	Amount    float64   // The primary numerical value
+	From      string    // The source unit or currency
+	To        string    // The target unit or currency
+	Action    string    // An associated action (e.g., "+", "-")
+	Percent   float64   // A percentage value
+	BaseValue float64   // The base value for percentage calculations
 }
