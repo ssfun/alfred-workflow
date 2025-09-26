@@ -2,21 +2,76 @@
 package calculators
 
 import (
+	"calculate-anything-go/pkg/alfred"
+	"calculate-anything-go/pkg/api"
+	"calculate-anything-go/pkg/config"
 	"calculate-anything-go/pkg/parser"
 	"fmt"
+	"github.com/deanishe/awgo"
+	"strings"
+	"time"
 )
 
-func HandleCurrency(p *parser.ParsedQuery) (string, error) {
-	// 在这里调用 API 客户端来获取汇率
-	//
-	// import "calculate-anything-go/pkg/api"
-	// result, err := api.ConvertCurrency(config.APIKeyFixer, p.From, p.To, p.Amount)
-	// if err != nil {
-	// 	 return "", err
-	// }
-	//
-	// return fmt.Sprintf("%.2f", result), nil
+// HandleCurrency processes a currency conversion query
+func HandleCurrency(wf *aw.Workflow, cfg *config.AppConfig, p *parser.ParsedQuery) {
+	cacheDuration := time.Duration(cfg.CurrencyCacheHours) * time.Hour
+	rates, err := api.GetExchangeRates(wf, cfg.APIKeyFixer, cacheDuration)
+	if err != nil {
+		alfred.ShowError(wf, err)
+		return
+	}
 
-	// 作为演示，我们返回一个模拟结果
-	return fmt.Sprintf("模拟结果：%.2f %s ≈ %.2f %s", p.Amount, p.From, p.Amount*1.1, p.To), nil
+	// 为README中提到的特殊符号进行映射
+	fromCurrency := mapCurrencySymbol(p.From)
+	toCurrency := mapCurrencySymbol(p.To)
+
+	resultValue, err := api.ConvertCurrency(rates, fromCurrency, toCurrency, p.Amount)
+	if err != nil {
+		alfred.ShowError(wf, err)
+		return
+	}
+
+	// 格式化输出
+	format := fmt.Sprintf("%%.%df", cfg.CurrencyDecimals)
+	resultString := fmt.Sprintf(format, resultValue)
+
+	title := fmt.Sprintf("%s %s = %s %s", formatNumber(p.Amount), fromCurrency, resultString, toCurrency)
+	subtitle := fmt.Sprintf("复制 '%s' 到剪贴板", resultString)
+
+	alfred.AddToWorkflow(wf, []alfred.Result{
+		{
+			Title:    title,
+			Subtitle: subtitle,
+			Arg:      resultString,
+		},
+	})
+}
+
+// formatNumber 简单地格式化数字以便显示
+func formatNumber(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// mapCurrencySymbol 将常见的货币符号映射到标准的三字母代码
+func mapCurrencySymbol(symbol string) string {
+	s := strings.ToUpper(symbol)
+	switch s {
+	case "€", "EURO", "EUROS":
+		return "EUR"
+	case "¥", "YEN":
+		return "JPY"
+	case "$", "DOLLAR", "DOLLARS":
+		return "USD"
+	case "£", "POUND", "POUNDS":
+		return "GBP"
+	// 添加更多在 README.md 中列出的符号...
+	case "R$":
+		return "BRL"
+	case "KČ":
+		return "CZK"
+	case "₹":
+		return "INR"
+	default:
+		return s
+	}
 }
