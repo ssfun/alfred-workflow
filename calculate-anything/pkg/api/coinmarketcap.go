@@ -1,4 +1,4 @@
-// calculate-anything/pkg/api/coinmarketcap.go
+// calculate-anything/pkg/api/fixer.go
 package api
 
 import (
@@ -13,91 +13,77 @@ import (
 )
 
 const (
-	coinMarketCapAPIURL = "https://pro-api.coinmarketcap.com/v1/tools/price-conversion"
-	cryptoCacheKey      = "coinmarketcap_rates_%s_to_%s"
+	fixerAPIURL   = "http://data.fixer.io/api/latest?access_key=%s"
+	fixerCacheKey = "fixer_rates"
 )
 
-// CMCResponse 镜像 CoinMarketCap API 的 JSON 响应结构
-type CMCResponse struct {
-	Status struct {
-		Timestamp    string `json:"timestamp"`
-		ErrorCode    int    `json:"error_code"`
-		ErrorMessage string `json:"error_message"`
-		Elapsed      int    `json:"elapsed"`
-		CreditCount  int    `json:"credit_count"`
-	} `json:"status"`
-	Data struct {
-		ID          int     `json:"id"`
-		Symbol      string  `json:"symbol"`
-		Name        string  `json:"name"`
-		Amount      float64 `json:"amount"`
-		LastUpdated string  `json:"last_updated"`
-		Quote       map[string]struct {
-			Price       float64 `json:"price"`
-			LastUpdated string  `json:"last_updated"`
-		} `json:"quote"`
-	} `json:"data"`
+// FixerResponse 镜像 fixer.io API 的 JSON 响应结构
+type FixerResponse struct {
+	Success   bool               `json:"success"`
+	Timestamp int64              `json:"timestamp"`
+	Base      string             `json:"base"`
+	Date      string             `json:"date"`
+	Rates     map[string]float64 `json:"rates"`
+	Error     struct {
+		Code int    `json:"code"`
+		Type string `json:"type"`
+		Info string `json:"info"`
+	} `json:"error"`
 }
 
-// GetCryptoConversion 获取加密货币到指定法币的转换率，优先使用缓存。
-func GetCryptoConversion(wf *aw.Workflow, apiKey string, amount float64, fromCrypto, toFiat string, cacheDuration time.Duration) (*CMCResponse, error) {
+// GetExchangeRates 从 fixer.io 获取最新汇率，优先使用缓存。
+func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duration) (*FixerResponse, error) {
 	if apiKey == "" {
-		return nil, fmt.Errorf("CoinMarketCap API 密钥未配置")
+		return nil, fmt.Errorf("Fixer.io API 密钥未配置")
 	}
 
-	fromCrypto = strings.ToUpper(fromCrypto)
-	toFiat = strings.ToUpper(toFiat)
-	cacheKey := fmt.Sprintf(cryptoCacheKey, fromCrypto, toFiat)
-
 	// 修正：wf 的类型是 *aw.Workflow
-	if wf.Cache.Exists(cacheKey) && !wf.Cache.Expired(cacheKey, cacheDuration) {
-		var resp CMCResponse
-		if err := wf.Cache.LoadJSON(cacheKey, &resp); err == nil {
-			if cachedQuote, ok := resp.Data.Quote[toFiat]; ok {
-				resp.Data.Amount = amount
-				cachedQuote.Price *= amount
-				resp.Data.Quote[toFiat] = cachedQuote
-				return &resp, nil
-			}
+	if wf.Cache.Exists(fixerCacheKey) && !wf.Cache.Expired(fixerCacheKey, cacheDuration) {
+		var rates FixerResponse
+		if err := wf.Cache.LoadJSON(fixerCacheKey, &rates); err == nil {
+			return &rates, nil
 		}
 	}
 
-	req, err := http.NewRequest("GET", coinMarketCapAPIURL, nil)
+	url := fmt.Sprintf(fixerAPIURL, apiKey)
+	resp, err := http.Get(url)
 	if err != nil {
-		return nil, err
-	}
-	q := req.URL.Query()
-	q.Add("amount", "1")
-	q.Add("symbol", fromCrypto)
-	q.Add("convert", toFiat)
-	req.URL.RawQuery = q.Encode()
-	req.Header.Set("Accepts", "application/json")
-	req.Header.Set("X-CMC_PRO_API_KEY", apiKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("无法连接到 CoinMarketCap API: %w", err)
+		return nil, fmt.Errorf("无法连接到 Fixer.io API: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var apiResponse CMCResponse
+	var apiResponse FixerResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
 		return nil, fmt.Errorf("解析 API 响应失败: %w", err)
 	}
-	if apiResponse.Status.ErrorCode != 0 {
-		return nil, fmt.Errorf("API 错误: %s", apiResponse.Status.ErrorMessage)
+	if !apiResponse.Success {
+		return nil, fmt.Errorf("API 错误: %s", apiResponse.Error.Info)
 	}
 
-	if err := wf.Cache.StoreJSON(cacheKey, apiResponse); err != nil {
-		wf.Logger().Printf("无法缓存加密货币数据: %s", err)
-	}
-
-	if baseQuote, ok := apiResponse.Data.Quote[toFiat]; ok {
-		apiResponse.Data.Amount = amount
-		baseQuote.Price *= amount
-		apiResponse.Data.Quote[toFiat] = baseQuote
+	if err := wf.Cache.StoreJSON(fixerCacheKey, apiResponse); err != nil {
+		wf.Logger().Printf("无法缓存汇率数据: %s", err)
 	}
 
 	return &apiResponse, nil
+}
+
+// ConvertCurrency 使用获取到的汇率数据进行货币转换。
+func ConvertCurrency(rates *FixerResponse, from, to string, amount float64) (float64, error) {
+	from = strings.ToUpper(from)
+	to = strings.ToUpper(to)
+	
+	fromRate, okFrom := rates.Rates[from]
+	toRate, okTo := rates.Rates[to]
+
+	if !okFrom {
+		return 0, fmt.Errorf("无效的源货币代码: %s", from)
+	}
+	if !okTo {
+		return 0, fmt.Errorf("无效的目标货币代码: %s", to)
+	}
+	if fromRate == 0 {
+		return 0, fmt.Errorf("源货币 '%s' 的汇率为零，无法计算", from)
+	}
+
+	return (amount / fromRate) * toRate, nil
 }
