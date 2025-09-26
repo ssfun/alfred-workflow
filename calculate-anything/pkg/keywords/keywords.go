@@ -1,4 +1,4 @@
-// calculate-anything-go/pkg/keywords/keywords.go
+// calculate-anything/pkg/keywords/keywords.go
 package keywords
 
 import "strings"
