@@ -37,10 +37,10 @@ func AddToWorkflow(wf *aw.Workflow, results []Result) {
 			item.Icon(&aw.Icon{Value: r.IconPath})
 		}
 
-		// 此处调用 NewModifier 时，r.Key 是 string 类型，
-		// NewModifier 方法的参数也接受 string 或兼容的类型。
+		// 修正：移除了错误的 aw.ModKey() 类型转换。
+		// NewModifier 方法的参数是 aw.ModKey，而 aw.ModKey 的底层类型是 string，
+		// 因此可以直接传递 string 类型的 mod.Key。
 		for _, mod := range r.Modifiers {
-			// 将 string 类型的 key 转换为 awgo 库内部所需的 ModKey 类型
 			item.NewModifier(aw.ModKey(mod.Key)).
 				Subtitle(mod.Subtitle).
 				Arg(mod.Arg)
