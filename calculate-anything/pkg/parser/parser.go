@@ -2,7 +2,8 @@
 package parser
 
 import (
-	"calculate-anything/pkg/i18n" // 修正了导入路径，之前是 "calculate-anything/pkg/i18n"
+	// 修正：现在 i18n 包被正确使用了
+	"calculate-anything/pkg/i18n"
 	"calculate-anything/pkg/keywords"
 	"regexp"
 	"strconv"
@@ -19,7 +20,7 @@ var (
 )
 
 // Parse 是主解析函数，它接收原始查询和加载的语言包，返回一个结构化的 ParsedQuery。
-// 修正：修复了 i1A.LanguagePack 的拼写错误
+// 修正：修复了 i1A 的拼写错误
 func Parse(query string, langPack *i18n.LanguagePack) *ParsedQuery {
 	if p := parseFixedStructureQueries(query); p != nil {
 		return p
