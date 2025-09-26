@@ -2,7 +2,7 @@
 package main
 
 import (
-    "calculate-anything-go/cmd"
+    "calculate-anything/cmd"
     "github.com/deanishe/awgo"
 )
 
