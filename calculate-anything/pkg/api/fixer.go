@@ -1,4 +1,4 @@
-// calculate-anything-go/pkg/api/fixer.go
+// calculate-anything/pkg/api/fixer.go
 package api
 
 import (
