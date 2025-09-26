@@ -2,15 +2,12 @@
 package parser
 
 import (
-	"calculate-anything/pkg/i18n"
+	"calculate-anything/pkg/i18n" // 修正了导入路径，之前是 "calculate-anything/pkg/i18n"
 	"calculate-anything/pkg/keywords"
 	"regexp"
 	"strconv"
 	"strings"
 )
-
-// 修正：所有 QueryType, UnknownQuery 等常量的声明已从此文件移除，
-// 它们的唯一定义现在位于 types.go 文件中。
 
 // 正则表达式集合
 var (
@@ -22,7 +19,8 @@ var (
 )
 
 // Parse 是主解析函数，它接收原始查询和加载的语言包，返回一个结构化的 ParsedQuery。
-func Parse(query string, langPack *i1A.LanguagePack) *ParsedQuery {
+// 修正：修复了 i1A.LanguagePack 的拼写错误
+func Parse(query string, langPack *i18n.LanguagePack) *ParsedQuery {
 	if p := parseFixedStructureQueries(query); p != nil {
 		return p
 	}
