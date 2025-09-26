@@ -1,4 +1,4 @@
-// calculate-anything-go/pkg/api/coinmarketcap.go
+// calculate-anything/pkg/api/coinmarketcap.go
 package api
 
 import (
