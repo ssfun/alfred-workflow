@@ -4,14 +4,14 @@ package calculators
 import (
 	"calculate-anything/pkg/alfred"
 	"fmt"
-	"github.com/deanishe/awgo"
+	aw "github.com/deanishe/awgo"
 	"math"
 	"strconv"
 	"strings"
 )
 
 // HandleColor 解析颜色代码（HEX, RGB）并提供不同格式的转换结果。
-func HandleColor(wf *awgo.Workflow, query string) {
+func HandleColor(wf *aw.Workflow, query string) {
 	query = strings.TrimSpace(query)
 	var r, g, b uint8 // 使用 uint8 (0-255) 来存储颜色分量
 
