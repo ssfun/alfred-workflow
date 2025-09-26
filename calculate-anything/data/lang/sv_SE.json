@@ -1,0 +1,14 @@
+{
+  "keywords": {
+    "dollar": "USD",
+    "euro": "EUR",
+    "yen": "JPY",
+    "pund": "GBP",
+    "kilometer": "km",
+    "meter": "m",
+    "uns": "oz"
+  },
+  "stop_words": [
+    "till", "i", "som", "är", "vad"
+  ]
+}
