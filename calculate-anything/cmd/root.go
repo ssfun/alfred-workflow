@@ -28,8 +28,8 @@ func Run(wf *aw.Workflow) {
 	langPack, err := i18n.LoadLanguagePack(cfg.Language)
 	if err != nil {
 		// 即使语言包加载失败，也应该继续执行，只是关键字功能会受限。
-		// 使用 awgo 的日志功能记录错误，方便调试。
-		wf.Logger().Printf("警告: 无法加载语言包: %v", err)
+		// 在当前 awgo 版本中不依赖 Logger()，改为在界面上提示一次。
+		wf.Warn(fmt.Sprintf("无法加载语言包: %v", err), "提示")
 	}
 
 	// 步骤 3: 检查是否是特殊内部命令，如 "_caclear" 用于清除缓存

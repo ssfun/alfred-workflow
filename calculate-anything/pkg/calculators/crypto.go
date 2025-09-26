@@ -107,7 +107,7 @@ func displayResult(wf *aw.Workflow, cfg *config.AppConfig, fromAmount float64, f
 			IconPath: "icon.png", // 可以为加密货币准备一个专用图标
 			Modifiers: []alfred.Modifier{
 				{
-					Key: aw.ModCmd,
+					Key: "cmd",
 					Subtitle: fmt.Sprintf("复制无格式的值 '%s'", resultStringUnformatted),
 					Arg: resultStringUnformatted,
 				},

@@ -28,7 +28,7 @@ func HandleTime(wf *aw.Workflow, cfg *config.AppConfig, p *parser.ParsedQuery) {
 	loc, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
 		loc = time.UTC
-		wf.Logger().Printf("警告: 无效的时区 '%s', 回退到 UTC", cfg.Timezone)
+		// 记录失败不是关键，避免依赖 Logger()
 	}
 	now := time.Now().In(loc)
 	input := p.Input

@@ -116,7 +116,7 @@ func HandleCurrency(wf *aw.Workflow, cfg *config.AppConfig, p *parser.ParsedQuer
 			Arg:      resultStringFormatted,
 			Modifiers: []alfred.Modifier{
 				{
-					Key:      aw.ModCmd,
+					Key:      "cmd",
 					Subtitle: fmt.Sprintf("复制无格式的值 '%s'", resultStringUnformatted),
 					Arg:      resultStringUnformatted,
 				},
