@@ -1,4 +1,4 @@
-// calculate-anything-go/pkg/config/config.go
+// calculate-anything/pkg/config/config.go
 package config
 
 import (
