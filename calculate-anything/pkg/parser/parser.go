@@ -2,147 +2,149 @@
 package parser
 
 import (
+	"calculate-anything-go/pkg/keywords"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-// 正则表达式集合
-var (
-	// e.g., "100 usd to mxn", "100 euros in dollars"
-	currencyRegex = regexp.MustCompile(`(?i)^([\d.,]+)\s*([a-zA-Z$€¥£]+)\s*(?:to|in|as|a)\s*([a-zA-Z$€¥£]+)$`)
-	// e.g., "100km m", "10 years to seconds"
-	unitRegex     = regexp.MustCompile(`(?i)^([\d.,]+)\s*([a-zA-Z]+)\s*(?:to|in|as|=)?\s*([a-zA-Z]+)$`)
-	// e.g., "100gb mb", "2tb in gb"
-	dataRegex     = regexp.MustCompile(`(?i)^([\d.,]+)\s*([a-zA-Z]+)\s*(?:to|in|as|=)?\s*([a-zA-Z]+)$`)
-	// e.g., "120 + 30%", "15% of 50"
-	percentageRegex = regexp.MustCompile(`(?i)^([\d.,]+)\s*([+\-]|plus|minus)\s*([\d.,]+)%$`)
-	percentageOfRegex = regexp.MustCompile(`(?i)^([\d.,]+)% of ([\d.,]+)$`)
-    // 新增: "40 as a % of 50"
-	percentageAsOfRegex = regexp.MustCompile(`(?i)^([\d.,]+)\s*(?:as a|is what)?\s*% of\s*([\d.,]+)$`)
-	// e.g., "12px", "2rem to pt"
-	pxEmRemRegex  = regexp.MustCompile(`(?i)^([\d.,]+)\s*(px|em|rem|pt)(?:\s*(?:to|in)\s*(px|em|rem|pt))?$`)
-	
+// QueryType 定义了查询的类型
+type QueryType int
+
+const (
+	UnknownQuery QueryType = iota
+	CurrencyQuery
+	CryptoQuery
+	UnitQuery
+	DataStorageQuery
+	PercentageQuery
+	PxEmRemQuery
+	TimeQuery
+	VATQuery
 )
 
-// Parse 接收原始查询字符串并尝试解析它
+// ParsedQuery 是解析自然语言查询后的结果
+type ParsedQuery struct {
+	Type        QueryType // 查询类型
+	Input       string    // 原始输入
+	Amount      float64   // 数值
+	From        string    // 源单位/货币
+	To          string    // 目标单位/货币
+	Action      string    // 附加动作 (e.g., "+", "-")
+	Percent     float64   // 百分比值
+	BaseValue   float64   // 百分比计算的基础值
+}
+
+
+// 正则表达式集合
+var (
+	// 用于匹配预处理后的简单转换格式, e.g., "100 usd mxn", "100 km m"
+	// 允许更广泛的字符集以匹配特殊单位如 'μs'
+	simpleConversionRegex = regexp.MustCompile(`^([\d.,]+)\s*([a-zA-Zμ°$€¥£\d]+)\s*([a-zA-Zμ°$€¥£\d]+)$`)
+
+	// 用于处理固定结构的查询，这些查询不应被预处理
+	percentageRegex     = regexp.MustCompile(`(?i)^([\d.,]+)\s*([+\-]|plus|minus)\s*([\d.,]+)%$`)
+	percentageOfRegex   = regexp.MustCompile(`(?i)^([\d.,]+)%\s*of\s*([\d.,]+)$`)
+	percentageAsOfRegex = regexp.MustCompile(`(?i)^([\d.,]+)\s*(?:as a|is what)?\s*% of\s*([\d.,]+)$`)
+	pxEmRemRegex        = regexp.MustCompile(`(?i)^([\d.,]+)\s*(px|em|rem|pt)(?:\s*(?:to|in)\s*(px|em|rem|pt))?$`)
+)
+
+// Parse 接收原始查询字符串并尝试解析它 (重构后版本)
 func Parse(query string) *ParsedQuery {
-	query = strings.TrimSpace(query)
+	// 针对不同类型的查询，采用不同的解析策略
 
-	// 尝试匹配每一种查询类型
-	if p := parseCurrency(query); p != nil {
+	// 策略1: 尝试匹配结构固定的查询 (百分比, Px/Em/Rem)
+	// 这类查询包含 'of', '+', '%' 等关键字符，不应被预处理移除
+	if p := parseFixedStructureQueries(query); p != nil {
 		return p
 	}
-	if p := parseUnit(query); p != nil {
-		return p
-	}
-	if p := parsePercentage(query); p != nil {
-		return p
-	}
-	if p := parsePxEmRem(query); p != nil {
-		return p
-	}
-	// ... 可以继续添加其他解析器
 
-	return &ParsedQuery{Type: UnknownQuery, Input: query}
-}
+	// 策略2: 对于转换类查询，先进行预处理
+	// '100 euros to dollars' -> '100 eur usd'
+	processedQuery := keywords.PreprocessQuery(query)
 
-func parseAmount(s string) float64 {
-	s = strings.ReplaceAll(s, ",", "")
-	f, _ := strconv.ParseFloat(s, 64)
-	return f
-}
-
-
-func parseCurrency(q string) *ParsedQuery {
-	matches := currencyRegex.FindStringSubmatch(q)
+	matches := simpleConversionRegex.FindStringSubmatch(processedQuery)
 	if len(matches) == 4 {
+		// 解析成功，但此时还无法确定具体是货币、单位还是数据存储
+		// 我们暂时将其标记为 UnitQuery，由上层逻辑（cmd/root.go）根据单位具体内容来决定最终类型
 		return &ParsedQuery{
-			Type:   CurrencyQuery,
-			Input:  q,
-			Amount: parseAmount(matches[1]),
-			From:   strings.ToUpper(matches[2]),
-			To:     strings.ToUpper(matches[3]),
-		}
-	}
-	return nil
-}
-
-func parseUnit(q string) *ParsedQuery {
-    // 这里需要一个单位列表来区分是单位查询还是数据存储查询
-    // 为了简化，我们暂时假设可以区分
-	matches := unitRegex.FindStringSubmatch(q)
-	if len(matches) == 4 {
-		// 在真实场景中，你需要检查 matches[2] 和 matches[3] 是否是有效的物理单位
-		return &ParsedQuery{
-			Type:   UnitQuery,
-			Input:  q,
+			Type:   UnitQuery, // 默认为单位查询，等待上层逻辑细化
+			Input:  query,
 			Amount: parseAmount(matches[1]),
 			From:   matches[2],
 			To:     matches[3],
 		}
 	}
-	return nil
+
+	// 如果所有策略都失败，返回未知类型
+	return &ParsedQuery{Type: UnknownQuery, Input: query}
 }
 
-func parsePercentage(q string) *parser.ParsedQuery {
-    // 匹配 "120 + 30%"
+// parseFixedStructureQueries 专门处理结构固定的查询
+func parseFixedStructureQueries(q string) *ParsedQuery {
+	// 尝试匹配百分比
+	// 匹配 "120 + 30%"
 	matches := percentageRegex.FindStringSubmatch(q)
 	if len(matches) == 4 {
-		return &parser.ParsedQuery{
-			Type:      parser.PercentageQuery,
+		return &ParsedQuery{
+			Type:      PercentageQuery,
 			Input:     q,
 			BaseValue: parseAmount(matches[1]),
 			Action:    normalizeAction(matches[2]),
 			Percent:   parseAmount(matches[3]),
 		}
 	}
-    
-    // 匹配 "15% of 50"
-    matches = percentageOfRegex.FindStringSubmatch(q)
-    if len(matches) == 3 {
-        return &parser.ParsedQuery{
-            Type:      parser.PercentageQuery,
-            Input:     q,
-            Action:    "of",
-            Percent:   parseAmount(matches[1]),
-            BaseValue: parseAmount(matches[2]),
-        }
-    }
+	// 匹配 "15% of 50"
+	matches = percentageOfRegex.FindStringSubmatch(q)
+	if len(matches) == 3 {
+		return &ParsedQuery{
+			Type:      PercentageQuery,
+			Input:     q,
+			Action:    "of",
+			Percent:   parseAmount(matches[1]),
+			BaseValue: parseAmount(matches[2]),
+		}
+	}
+	// 匹配 "40 as a % of 50"
+	matches = percentageAsOfRegex.FindStringSubmatch(q)
+	if len(matches) == 3 {
+		return &ParsedQuery{
+			Type:      PercentageQuery,
+			Input:     q,
+			Action:    "as % of",
+			Amount:    parseAmount(matches[1]),
+			BaseValue: parseAmount(matches[2]),
+		}
+	}
 
-    // 新增: 匹配 "40 as a % of 50"
-    matches = percentageAsOfRegex.FindStringSubmatch(q)
-    if len(matches) == 3 {
-        return &parser.ParsedQuery{
-            Type:      parser.PercentageQuery,
-            Input:     q,
-            Action:    "as % of",
-            Amount:    parseAmount(matches[1]), // 40
-            BaseValue: parseAmount(matches[2]), // 50
-        }
-    }
+	// 尝试匹配 Px/Em/Rem
+	matches = pxEmRemRegex.FindStringSubmatch(q)
+	if len(matches) > 0 {
+		toUnit := ""
+		if len(matches) == 4 {
+			toUnit = matches[3]
+		}
+		return &ParsedQuery{
+			Type:   PxEmRemQuery,
+			Input:  q,
+			Amount: parseAmount(matches[1]),
+			From:   matches[2],
+			To:     toUnit,
+		}
+	}
 
 	return nil
 }
 
-func parsePxEmRem(q string) *ParsedQuery {
-    matches := pxEmRemRegex.FindStringSubmatch(q)
-    if len(matches) > 0 {
-        toUnit := ""
-        if len(matches) == 4 {
-            toUnit = matches[3]
-        }
-        return &ParsedQuery{
-            Type:   PxEmRemQuery,
-            Input:  q,
-            Amount: parseAmount(matches[1]),
-            From:   matches[2],
-            To:     toUnit, // 如果没有指定 "to"，这里会是空字符串
-        }
-    }
-    return nil
+// parseAmount 清理数字字符串并转换为 float64
+func parseAmount(s string) float64 {
+	// 为了国际化，同时移除逗号和处理用逗号作小数点的欧洲格式
+	s = strings.ReplaceAll(s, ",", "")
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
 }
 
+// normalizeAction 将 'plus'/'minus' 等词语转换为符号
 func normalizeAction(action string) string {
 	action = strings.ToLower(action)
 	switch action {
