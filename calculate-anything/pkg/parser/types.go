@@ -1,4 +1,4 @@
-// calculate-anything-go/pkg/parser/types.go
+// calculate-anything/pkg/parser/types.go
 package parser
 
 // QueryType 定义了查询的类型
