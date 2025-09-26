@@ -1,4 +1,4 @@
-// calculate-anything-go/pkg/alfred/feedback.go
+// calculate-anything/pkg/alfred/feedback.go
 package alfred
 
 import (
