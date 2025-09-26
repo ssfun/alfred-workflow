@@ -1,46 +1,22 @@
-package calculator
+// calculate-anything-go/pkg/calculators/currency.go
+package calculators
 
 import (
-	"encoding/json"
+	"calculate-anything-go/pkg/parser"
 	"fmt"
-	"net/http"
 )
 
-const fixerAPI = "http://data.fixer.io/api/latest?access_key=%s"
+func HandleCurrency(p *parser.ParsedQuery) (string, error) {
+	// 在这里调用 API 客户端来获取汇率
+	//
+	// import "calculate-anything-go/pkg/api"
+	// result, err := api.ConvertCurrency(config.APIKeyFixer, p.From, p.To, p.Amount)
+	// if err != nil {
+	// 	 return "", err
+	// }
+	//
+	// return fmt.Sprintf("%.2f", result), nil
 
-// FixerResponse API 返回的结构体
-type FixerResponse struct {
-	Success bool               `json:"success"`
-	Rates   map[string]float64 `json:"rates"`
-}
-
-// ConvertCurrency 实现货币转换
-func ConvertCurrency(apiKey string, from string, to string, amount float64) (float64, error) {
-	// awgo 提供了缓存机制，可以优先使用
-	// wf.Cache.LoadOrStore(...)
-
-	resp, err := http.Get(fmt.Sprintf(fixerAPI, apiKey))
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	var data FixerResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return 0, err
-	}
-
-	if !data.Success {
-		return 0, fmt.Errorf("fixer.io API error")
-	}
-
-	// 汇率计算 (通常以 EUR 为基准)
-	fromRate, okFrom := data.Rates[strings.ToUpper(from)]
-	toRate, okTo := data.Rates[strings.ToUpper(to)]
-
-	if !okFrom || !okTo {
-		return 0, fmt.Errorf("invalid currency code")
-	}
-
-	return (amount / fromRate) * toRate, nil
+	// 作为演示，我们返回一个模拟结果
+	return fmt.Sprintf("模拟结果：%.2f %s ≈ %.2f %s", p.Amount, p.From, p.Amount*1.1, p.To), nil
 }
