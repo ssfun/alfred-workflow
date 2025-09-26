@@ -1,10 +1,10 @@
-// calculate-anything-go/pkg/calculators/vat.go
+// calculate-anything/pkg/calculators/vat.go
 package calculators
 
 import (
-	"calculate-anything-go/pkg/alfred"
-	"calculate-anything-go/pkg/config"
-	"calculate-anything-go/pkg/parser"
+	"calculate-anything/pkg/alfred"
+	"calculate-anything/pkg/config"
+	"calculate-anything/pkg/parser"
 	"fmt"
 	"github.com/deanishe/awgo"
 	"strconv"
