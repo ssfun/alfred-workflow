@@ -1,0 +1,21 @@
+{
+  "keywords": {
+    "dollars": "USD",
+    "dollar": "USD",
+    "euros": "EUR",
+    "euro": "EUR",
+    "yen": "JPY",
+    "pounds": "GBP",
+    "pound": "GBP",
+    "kilometers": "km",
+    "kilometer": "km",
+    "meters": "m",
+    "meter": "m",
+    "ounces": "oz",
+    "ounce": "oz",
+    "hakunamatata": "year"
+  },
+  "stop_words": [
+    "to", "in", "as", "a", "=", "equals", "is", "what"
+  ]
+}
