@@ -2,7 +2,7 @@
 package alfred
 
 import (
-	// 修正：移除了 "aw" 这个未使用的别名
+	// 修正：统一使用 "github.com/deanishe/awgo"，不使用任何别名
 	"github.com/deanishe/awgo"
 )
 
@@ -26,7 +26,7 @@ type Result struct {
 // AddToWorkflow 将一组标准化的 Result 对象添加到 Alfred 的反馈列表中。
 func AddToWorkflow(wf *awgo.Workflow, results []Result) {
 	for _, r := range results {
-		// 修正：使用正确的类型 awgo.Workflow
+		// 修正：wf 的类型是 *awgo.Workflow
 		item := wf.NewItem(r.Title).
 			Subtitle(r.Subtitle).
 			Arg(r.Arg).
@@ -47,6 +47,6 @@ func AddToWorkflow(wf *awgo.Workflow, results []Result) {
 
 // ShowError 在 Alfred 中显示一个用户友好的错误信息。
 func ShowError(wf *awgo.Workflow, err error) {
-	// 修正：使用正确的类型 awgo.Workflow
+	// 修正：wf 的类型是 *awgo.Workflow
 	wf.Warn(err.Error(), "计算出错")
 }
