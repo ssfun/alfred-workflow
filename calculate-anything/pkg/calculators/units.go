@@ -5,21 +5,21 @@ import (
 	"calculate-anything/pkg/alfred"
 	"calculate-anything/pkg/parser"
 	"fmt"
-	"github.com/deanishe/awgo"
 	"strconv"
 	"strings"
+
+	"github.com/deanishe/awgo"
 )
 
-// Unit 代表一个测量单位
+// Unit 定义了一个物理单位及其换算到国际标准单位（SI）的规则。
 type Unit struct {
-	Name string
-	Type string  // "length", "mass", "temperature" 等
-	ToSI float64 // 转换为其国际标准单位（SI）的换算因子
-	FromSI func(float64) float64 // 从SI单位转换回来的函数（主要用于温度）
+	Name   string
+	Type   string                // 单位类型, e.g., "length", "mass"
+	ToSI   float64               // 乘以该因子可转换为 SI 单位
+	FromSI func(float64) float64 // 从 SI 单位转换回来的函数（主要用于温度这类非线性转换）
 }
 
-// unitMap 包含了所有支持的单位及其换算信息
-// 数据来源于 README.md 文件
+// unitMap 包含了所有支持的物理单位，数据来源于 README.md 文件。
 var unitMap = map[string]Unit{
 	// --- 长度 (SI: 米 'm') ---
 	"m":   {Name: "Meter", Type: "length", ToSI: 1.0},
@@ -66,7 +66,7 @@ var unitMap = map[string]Unit{
 	"kg":  {Name: "Kilogram", Type: "mass", ToSI: 1.0},
 	"g":   {Name: "Gram", Type: "mass", ToSI: 0.001},
 	"mg":  {Name: "Miligram", Type: "mass", ToSI: 1e-6},
-	"n":   {Name: "Newton", Type: "mass", ToSI: 0.10197}, // on Earth
+	"n":   {Name: "Newton", Type: "mass", ToSI: 0.10197}, // 在地球重力下
 	"st":  {Name: "Stone", Type: "mass", ToSI: 6.35029},
 	"lb":  {Name: "Pound", Type: "mass", ToSI: 0.453592},
 	"oz":  {Name: "Ounce", Type: "mass", ToSI: 0.0283495},
@@ -76,7 +76,7 @@ var unitMap = map[string]Unit{
 
 	// --- 速度 (SI: 米每秒 'mps') ---
 	"mps": {Name: "Meters Per Second", Type: "speed", ToSI: 1.0},
-	"kph": {Name: "Kilometers Per Hour", Type: "speed", ToSI: 0.277778},
+	"kph": {Name: "Kilometers Per Hour", Type: "speed", ToSI: 1.0 / 3.6},
 	"mph": {Name: "Miles Per Hour", Type: "speed", ToSI: 0.44704},
 	"fps": {Name: "Feet Per Second", Type: "speed", ToSI: 0.3048},
 
@@ -85,9 +85,9 @@ var unitMap = map[string]Unit{
 	"rad": {Name: "Radian", Type: "rotation", ToSI: 1.0},
 
 	// --- 温度 (SI: 开尔文 'k') ---
-	"k": {Name: "Kelvin", Type: "temperature", ToSI: 1.0, FromSI: func(k float64) float64 { return k }},
-	"c": {Name: "Centigrade", Type: "temperature", ToSI: 273.15, FromSI: func(k float64) float64 { return k - 273.15 }},
-	"f": {Name: "Fahrenheit", Type: "temperature", ToSI: 255.372, FromSI: func(k float64) float64 { return (k-273.15)*9/5 + 32 }},
+	"k": {Name: "Kelvin", Type: "temperature", FromSI: func(k float64) float64 { return k }},
+	"c": {Name: "Centigrade", Type: "temperature", FromSI: func(k float64) float64 { return k - 273.15 }},
+	"f": {Name: "Fahrenheit", Type: "temperature", FromSI: func(k float64) float64 { return (k-273.15)*9/5 + 32 }},
 
 	// --- 压力 (SI: 帕斯卡 'pa') ---
 	"pa":   {Name: "Pascal", Type: "pressure", ToSI: 1.0},
@@ -114,7 +114,8 @@ var unitMap = map[string]Unit{
 	"kj":   {Name: "Kilojoule", Type: "energy", ToSI: 1000.0},
 	"mj":   {Name: "Megajoule", Type: "energy", ToSI: 1e6},
 	"cal":  {Name: "Calorie", Type: "energy", ToSI: 4.184},
-	"nm":   {Name: "Newton Meter", Type: "energy", ToSI: 1.0}, // Note: 'nm' is ambiguous, parser must be smart
+	// "nm" 与长度单位冲突，需要在解析器层面做更智能的区分，此处暂时注释
+	// "nm":   {Name: "Newton Meter", Type: "energy", ToSI: 1.0},
 	"ftlb": {Name: "Foot Pound", Type: "energy", ToSI: 1.35582},
 	"whr":  {Name: "Watt Hour", Type: "energy", ToSI: 3600.0},
 	"kwhr": {Name: "Kilowatt Hour", Type: "energy", ToSI: 3.6e+6},
@@ -122,8 +123,9 @@ var unitMap = map[string]Unit{
 	"mev":  {Name: "Mega Electron Volt", Type: "energy", ToSI: 1.6022e-13},
 }
 
-// HandleUnits (已更新以处理温度等特殊情况)
+// HandleUnits 处理物理单位的转换。
 func HandleUnits(wf *aw.Workflow, p *parser.ParsedQuery) {
+	// 将单位符号转为小写以匹配 unitMap
 	fromUnit, okFrom := unitMap[strings.ToLower(p.From)]
 	toUnit, okTo := unitMap[strings.ToLower(p.To)]
 
@@ -136,29 +138,33 @@ func HandleUnits(wf *aw.Workflow, p *parser.ParsedQuery) {
 		return
 	}
 
+	// 确保两个单位属于同一类型（例如，不能将长度转换为质量）
 	if fromUnit.Type != toUnit.Type {
 		alfred.ShowError(wf, fmt.Errorf("无法在不同类型单位间转换: %s -> %s", fromUnit.Type, toUnit.Type))
 		return
 	}
 
 	var resultValue float64
-	// 温度是特例，因为它不是简单的乘法
+	// 温度是特例，它的转换不是简单的乘法，需要特殊处理
 	if fromUnit.Type == "temperature" {
 		var valueInKelvin float64
-		if fromUnit.Name == "Kelvin" {
+		// 步骤 1: 将输入温度统一转换为开尔文（Kelvin）
+		switch fromUnit.Name {
+		case "Kelvin":
 			valueInKelvin = p.Amount
-		} else if fromUnit.Name == "Centigrade" {
-			valueInKelvin = p.Amount + fromUnit.ToSI
-		} else { // Fahrenheit
+		case "Centigrade":
+			valueInKelvin = p.Amount + 273.15
+		case "Fahrenheit":
 			valueInKelvin = (p.Amount-32)*5/9 + 273.15
 		}
+		// 步骤 2: 从开尔文转换为目标温度单位
 		resultValue = toUnit.FromSI(valueInKelvin)
 	} else {
-		// 标准转换步骤: Amount -> SI -> Target
+		// 对于其他所有线性单位，使用标准转换流程: Amount -> SI -> Target
 		valueInSI := p.Amount * fromUnit.ToSI
 		resultValue = valueInSI / toUnit.ToSI
 	}
-	
+
 	resultString := strconv.FormatFloat(resultValue, 'f', -1, 64)
 
 	title := fmt.Sprintf("%g %s = %s %s", p.Amount, p.From, resultString, p.To)
