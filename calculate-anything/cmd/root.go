@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/deanishe/awgo"
+	aw "github.com/deanishe/awgo"
 )
 
 // Run 是 Alfred 执行的入口函数，也是整个应用的大脑。
@@ -109,7 +109,7 @@ func Run(wf *aw.Workflow) {
 // handleSpecialCommands 处理内部命令，目前只支持清除缓存。
 func handleSpecialCommands(wf *aw.Workflow, query string) bool {
 	if query == "_caclear" {
-		if err := wf.Cache.Clear(); err != nil {
+		if err := wf.ClearCache(); err != nil {
 			alfred.ShowError(wf, fmt.Errorf("清除缓存失败: %w", err))
 		} else {
 			alfred.AddToWorkflow(wf, []alfred.Result{{Title: "缓存已成功清除"}})
