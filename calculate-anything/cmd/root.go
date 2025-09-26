@@ -3,7 +3,7 @@ package cmd
 
 import (
 	"calculate-anything/pkg/alfred"
-	"calculate-anything/pkg/calculators"
+	"calculate-anything/pkg/calculator"
 	"calculate-anything/pkg/config"
 	"calculate-anything/pkg/parser"
 	"fmt"
