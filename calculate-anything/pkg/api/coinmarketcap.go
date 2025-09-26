@@ -8,17 +8,14 @@ import (
 	"strings"
 	"time"
 
-	// 修正：根据官方文档，统一使用 aw 别名导入
 	aw "github.com/deanishe/awgo"
 )
 
-// 修正：只保留与 coinmarketcap.go 相关的常量
 const (
 	coinMarketCapAPIURL = "https://pro-api.coinmarketcap.com/v1/tools/price-conversion"
 	cryptoCacheKey      = "coinmarketcap_rates_%s_to_%s"
 )
 
-// 修正：只保留与 coinmarketcap.go 相关的类型定义
 type CMCResponse struct {
 	Status struct {
 		Timestamp    string `json:"timestamp"`
@@ -40,7 +37,6 @@ type CMCResponse struct {
 	} `json:"data"`
 }
 
-// GetCryptoConversion 获取加密货币到指定法币的转换率，优先使用缓存。
 func GetCryptoConversion(wf *aw.Workflow, apiKey string, amount float64, fromCrypto, toFiat string, cacheDuration time.Duration) (*CMCResponse, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("CoinMarketCap API 密钥未配置")
@@ -89,9 +85,9 @@ func GetCryptoConversion(wf *aw.Workflow, apiKey string, amount float64, fromCry
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Status.ErrorMessage)
 	}
 
-	// 修正：根据您的分析，使用正确的日志记录方法 wf.Log.Printf()
+	// 修正：根据您的分析，awgo 的正确日志记录方法是通过 wf.Logger() 获取记录器实例
 	if err := wf.Cache.StoreJSON(cacheKey, apiResponse); err != nil {
-		wf.Log.Printf("无法缓存加密货币数据: %s", err)
+		wf.Logger().Printf("无法缓存加密货币数据: %s", err)
 	}
 
 	if baseQuote, ok := apiResponse.Data.Quote[toFiat]; ok {
