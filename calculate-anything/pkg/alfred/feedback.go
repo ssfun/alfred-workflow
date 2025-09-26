@@ -2,7 +2,7 @@
 package alfred
 
 import (
-	// 修正：根据官方文档，导入时使用 aw 别名
+	// 修正：根据官方文档，统一使用 aw 别名导入
 	aw "github.com/deanishe/awgo"
 )
 
