@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	// 修正：根据官方文档，统一使用 aw 别名导入
 	aw "github.com/deanishe/awgo"
 )
 
@@ -16,6 +17,7 @@ const (
 	fixerCacheKey = "fixer_rates"
 )
 
+// FixerResponse 镜像 fixer.io API 的 JSON 响应结构
 type FixerResponse struct {
 	Success   bool               `json:"success"`
 	Timestamp int64              `json:"timestamp"`
@@ -29,11 +31,13 @@ type FixerResponse struct {
 	} `json:"error"`
 }
 
+// GetExchangeRates 从 fixer.io 获取最新汇率，优先使用缓存。
 func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duration) (*FixerResponse, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("Fixer.io API 密钥未配置")
 	}
 
+	// 修正：wf 的类型是 *aw.Workflow
 	if wf.Cache.Exists(fixerCacheKey) && !wf.Cache.Expired(fixerCacheKey, cacheDuration) {
 		var rates FixerResponse
 		if err := wf.Cache.LoadJSON(fixerCacheKey, &rates); err == nil {
@@ -56,7 +60,7 @@ func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duratio
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Error.Info)
 	}
 
-	// 修正：根据您的分析，awgo 的正确日志记录方法是通过 wf.Logger() 获取记录器实例
+	// 修正：使用正确的日志记录方法 wf.Logger().Printf()
 	if err := wf.Cache.StoreJSON(fixerCacheKey, apiResponse); err != nil {
 		wf.Logger().Printf("无法缓存汇率数据: %s", err)
 	}
@@ -64,6 +68,7 @@ func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duratio
 	return &apiResponse, nil
 }
 
+// ConvertCurrency 使用获取到的汇率数据进行货币转换。
 func ConvertCurrency(rates *FixerResponse, from, to string, amount float64) (float64, error) {
 	from = strings.ToUpper(from)
 	to = strings.ToUpper(to)
