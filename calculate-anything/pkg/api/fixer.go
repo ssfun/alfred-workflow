@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	// 修正：统一使用 "github.com/deanishe/awgo"，不使用任何别名
-	"github.com/deanishe/awgo"
+	// 修正：根据官方文档，统一使用 aw 别名导入
+	aw "github.com/deanishe/awgo"
 )
 
 const (
@@ -32,12 +32,12 @@ type FixerResponse struct {
 }
 
 // GetExchangeRates 从 fixer.io 获取最新汇率，优先使用缓存。
-func GetExchangeRates(wf *awgo.Workflow, apiKey string, cacheDuration time.Duration) (*FixerResponse, error) {
+func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duration) (*FixerResponse, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("Fixer.io API 密钥未配置")
 	}
 
-	// 修正：wf 的类型是 *awgo.Workflow
+	// 修正：wf 的类型是 *aw.Workflow
 	if wf.Cache.Exists(fixerCacheKey) && !wf.Cache.Expired(fixerCacheKey, cacheDuration) {
 		var rates FixerResponse
 		if err := wf.Cache.LoadJSON(fixerCacheKey, &rates); err == nil {
@@ -60,6 +60,7 @@ func GetExchangeRates(wf *awgo.Workflow, apiKey string, cacheDuration time.Durat
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Error.Info)
 	}
 
+	// 修正：使用正确的 Logger() 方法获取日志记录器
 	if err := wf.Cache.StoreJSON(fixerCacheKey, apiResponse); err != nil {
 		wf.Logger().Printf("无法缓存汇率数据: %s", err)
 	}
