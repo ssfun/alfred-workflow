@@ -1,0 +1,21 @@
+{
+  "keywords": {
+    "dolares": "USD",
+    "dolar": "USD",
+    "euros": "EUR",
+    "euro": "EUR",
+    "yenes": "JPY",
+    "yen": "JPY",
+    "libras": "GBP",
+    "libra": "GBP",
+    "kilometros": "km",
+    "kilometro": "km",
+    "metros": "m",
+    "metro": "m",
+    "onzas": "oz",
+    "onza": "oz"
+  },
+  "stop_words": [
+    "a", "en", "como", "es", "que", "de"
+  ]
+}
