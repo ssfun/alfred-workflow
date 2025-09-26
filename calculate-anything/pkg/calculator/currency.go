@@ -75,3 +75,10 @@ func mapCurrencySymbol(symbol string) string {
 		return s
 	}
 }
+
+// IsCurrency 检查一个符号是否是已知的货币
+func IsCurrency(symbol string) bool {
+    // 这是一个简化实现，一个真实的应用会有一个完整的列表
+    _, isKnownSymbol := mapCurrencySymbol(symbol)
+    return isKnownSymbol
+}
