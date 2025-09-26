@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	// 修正：移除了 "aw" 这个未使用的别名
+	// 修正：统一使用 "github.com/deanishe/awgo"，不使用任何别名
 	"github.com/deanishe/awgo"
 )
 
@@ -37,7 +37,7 @@ func GetExchangeRates(wf *awgo.Workflow, apiKey string, cacheDuration time.Durat
 		return nil, fmt.Errorf("Fixer.io API 密钥未配置")
 	}
 
-	// 修正：使用 awgo.Workflow
+	// 修正：wf 的类型是 *awgo.Workflow
 	if wf.Cache.Exists(fixerCacheKey) && !wf.Cache.Expired(fixerCacheKey, cacheDuration) {
 		var rates FixerResponse
 		if err := wf.Cache.LoadJSON(fixerCacheKey, &rates); err == nil {
@@ -60,7 +60,6 @@ func GetExchangeRates(wf *awgo.Workflow, apiKey string, cacheDuration time.Durat
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Error.Info)
 	}
 
-	// 修正：使用 Logger() 方法获取日志记录器
 	if err := wf.Cache.StoreJSON(fixerCacheKey, apiResponse); err != nil {
 		wf.Logger().Printf("无法缓存汇率数据: %s", err)
 	}
@@ -73,7 +72,6 @@ func ConvertCurrency(rates *FixerResponse, from, to string, amount float64) (flo
 	from = strings.ToUpper(from)
 	to = strings.ToUpper(to)
 	
-	// 修正：移除了未使用的 `base` 变量，转换逻辑本身不直接需要它
 	fromRate, okFrom := rates.Rates[from]
 	toRate, okTo := rates.Rates[to]
 
