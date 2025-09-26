@@ -2,39 +2,43 @@
 package parser
 
 import (
+	"calculate-anything/pkg/i18n"
 	"calculate-anything/pkg/keywords"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-// 修正: 移除了所有 QueryType, UnknownQuery 等常量的重复声明
-// 这些定义现在只存在于 types.go 文件中
-
 // 正则表达式集合
 var (
-	// 用于匹配预处理后的简单转换格式, e.g., "100 usd mxn", "100 km m"
+	// 用于匹配经过预处理后的简单转换格式, e.g., "100 usd mxn", "100 km m"。
+	// 它期望的格式是 "数字 单位 单位"。
 	simpleConversionRegex = regexp.MustCompile(`^([\d.,]+)\s*([a-zA-Zμ°$€¥£\d]+)\s*([a-zA-Zμ°$€¥£\d]+)$`)
 
-	// 用于处理固定结构的查询
+	// 用于处理结构固定的查询，这些查询不应该被预处理，因为其中的词（如 "of"）是关键部分。
 	percentageRegex     = regexp.MustCompile(`(?i)^([\d.,]+)\s*([+\-]|plus|minus)\s*([\d.,]+)%$`)
 	percentageOfRegex   = regexp.MustCompile(`(?i)^([\d.,]+)%\s*of\s*([\d.,]+)$`)
 	percentageAsOfRegex = regexp.MustCompile(`(?i)^([\d.,]+)\s*(?:as a|is what)?\s*% of\s*([\d.,]+)$`)
 	pxEmRemRegex        = regexp.MustCompile(`(?i)^([\d.,]+)\s*(px|em|rem|pt)(?:\s*(?:to|in)\s*(px|em|rem|pt))?$`)
 )
 
-// Parse 接收原始查询字符串并尝试解析它 (更新了函数签名以接收语言包)
+// Parse 是主解析函数，它接收原始查询和加载的语言包，返回一个结构化的 ParsedQuery。
 func Parse(query string, langPack *i18n.LanguagePack) *ParsedQuery {
-	// 策略1: 尝试匹配结构固定的查询 (百分比, Px/Em/Rem)
+	// 策略 1: 优先尝试匹配结构固定的查询（百分比, Px/Em/Rem）。
+	// 这类查询包含 'of', '+', '%' 等关键字符，不应被预处理移除。
 	if p := parseFixedStructureQueries(query); p != nil {
 		return p
 	}
 
-	// 策略2: 对于转换类查询，先进行预处理
+	// 策略 2: 对于转换类查询，先使用关键字和停用词系统进行预处理。
+	// e.g., "100 euros to dollars" -> "100 eur usd"
 	processedQuery := keywords.PreprocessQuery(query, langPack)
 
+	// 使用简单的正则表达式匹配预处理后的字符串
 	matches := simpleConversionRegex.FindStringSubmatch(processedQuery)
 	if len(matches) == 4 {
+		// 解析成功。此时还无法确定具体是货币、单位还是数据存储。
+		// 我们暂时将其标记为 UnitQuery，由上层逻辑（cmd/root.go）根据单位的具体内容来决定最终类型。
 		return &ParsedQuery{
 			Type:   UnitQuery, // 默认为单位查询，等待上层逻辑细化
 			Input:  query,
@@ -48,7 +52,7 @@ func Parse(query string, langPack *i18n.LanguagePack) *ParsedQuery {
 	return &ParsedQuery{Type: UnknownQuery, Input: query}
 }
 
-// parseFixedStructureQueries 专门处理结构固定的查询
+// parseFixedStructureQueries 专门处理结构固定的查询，避免被预处理破坏。
 func parseFixedStructureQueries(q string) *ParsedQuery {
 	// 尝试匹配百分比
 	matches := percentageRegex.FindStringSubmatch(q)
@@ -86,7 +90,7 @@ func parseFixedStructureQueries(q string) *ParsedQuery {
 	matches = pxEmRemRegex.FindStringSubmatch(q)
 	if len(matches) > 0 {
 		toUnit := ""
-		if len(matches) == 4 {
+		if len(matches) == 4 && matches[3] != "" {
 			toUnit = matches[3]
 		}
 		return &ParsedQuery{
@@ -101,14 +105,15 @@ func parseFixedStructureQueries(q string) *ParsedQuery {
 	return nil
 }
 
-// parseAmount 清理数字字符串并转换为 float64
+// parseAmount 清理数字字符串并将其转换为 float64。
 func parseAmount(s string) float64 {
+	// 为了支持国际化格式（如 1,234.56），先移除所有逗号
 	s = strings.ReplaceAll(s, ",", "")
 	f, _ := strconv.ParseFloat(s, 64)
 	return f
 }
 
-// normalizeAction 将 'plus'/'minus' 等词语转换为符号
+// normalizeAction 将 'plus'/'minus' 等词语统一转换成符号。
 func normalizeAction(action string) string {
 	action = strings.ToLower(action)
 	switch action {
