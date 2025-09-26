@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	// 修正：移除了 "aw" 这个未使用的别名
+	// 修正：统一使用 "github.com/deanishe/awgo"，不使用任何别名
 	"github.com/deanishe/awgo"
 )
 
@@ -49,7 +49,7 @@ func GetCryptoConversion(wf *awgo.Workflow, apiKey string, amount float64, fromC
 	toFiat = strings.ToUpper(toFiat)
 	cacheKey := fmt.Sprintf(cryptoCacheKey, fromCrypto, toFiat)
 
-	// 修正：使用 awgo.Workflow
+	// 修正：wf 的类型是 *awgo.Workflow
 	if wf.Cache.Exists(cacheKey) && !wf.Cache.Expired(cacheKey, cacheDuration) {
 		var resp CMCResponse
 		if err := wf.Cache.LoadJSON(cacheKey, &resp); err == nil {
@@ -89,7 +89,6 @@ func GetCryptoConversion(wf *awgo.Workflow, apiKey string, amount float64, fromC
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Status.ErrorMessage)
 	}
 
-	// 修正：使用 Logger() 方法获取日志记录器
 	if err := wf.Cache.StoreJSON(cacheKey, apiResponse); err != nil {
 		wf.Logger().Printf("无法缓存加密货币数据: %s", err)
 	}
