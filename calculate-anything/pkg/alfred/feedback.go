@@ -5,23 +5,23 @@ import (
 	"github.com/deanishe/awgo"
 )
 
-// Modifier holds data for an Alfred modifier key (e.g., Cmd, Opt).
+// Modifier 定义了 Alfred 结果的修饰键（如 Cmd, Opt）
 type Modifier struct {
-	Key      aw.ModKey // e.g., aw.ModCmd, aw.ModOpt
+	Key      aw.ModKey // 例如 aw.ModCmd, aw.ModOpt
 	Subtitle string
 	Arg      string
 }
 
-// Result is a standard structure for a single calculation result.
+// Result 是用于生成单个 Alfred 结果项的标准结构
 type Result struct {
 	Title     string
 	Subtitle  string
-	Arg       string // Value copied to clipboard
+	Arg       string     // 回车后复制到剪贴板的内容
 	IconPath  string
-	Modifiers []Modifier
+	Modifiers []Modifier // 附加的修饰键操作
 }
 
-// AddToWorkflow adds a slice of Results to the Alfred workflow feedback.
+// AddToWorkflow 将一组 Result 添加到 Alfred 的反馈列表中
 func AddToWorkflow(wf *aw.Workflow, results []Result) {
 	for _, r := range results {
 		item := wf.NewItem(r.Title).
@@ -33,7 +33,7 @@ func AddToWorkflow(wf *aw.Workflow, results []Result) {
 			item.Icon(&aw.Icon{Value: r.IconPath})
 		}
 
-		// Add modifier keys
+		// 添加修饰键
 		for _, mod := range r.Modifiers {
 			item.NewModifier(mod.Key).
 				Subtitle(mod.Subtitle).
@@ -42,8 +42,8 @@ func AddToWorkflow(wf *aw.Workflow, results []Result) {
 	}
 }
 
-// ShowError displays a user-friendly error in Alfred's results.
+// ShowError 在 Alfred 中显示一个用户友好的错误信息
 func ShowError(wf *aw.Workflow, err error) {
-	// Corrected: Use wf.Warn() instead of wf.NewWarning()
-	wf.Warn("Calculation Error", err.Error())
+	// 修正: awgo库中使用的是 Warn() 方法
+	wf.Warn(err.Error(), "计算出错")
 }
