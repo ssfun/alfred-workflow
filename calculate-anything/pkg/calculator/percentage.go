@@ -1,8 +1,8 @@
-// calculate-anything-go/pkg/calculators/percentage.go
+// calculate-anything/pkg/calculators/percentage.go
 package calculators
 
 import (
-	"calculate-anything-go/pkg/parser"
+	"calculate-anything/pkg/parser"
 	"fmt"
 )
 
