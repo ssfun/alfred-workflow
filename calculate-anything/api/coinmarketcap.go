@@ -90,9 +90,9 @@ func GetCryptoConversion(wf *aw.Workflow, apiKey string, amount float64, fromCry
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Status.ErrorMessage)
 	}
 
-	// 修正：使用正确的日志记录方法 wf.Log.Printf()
+	// 修正：使用正确的日志记录方法 wf.Logger().Printf()
 	if err := wf.Cache.StoreJSON(cacheKey, apiResponse); err != nil {
-		wf.Log.Printf("无法缓存加密货币数据: %s", err)
+		wf.Logger().Printf("无法缓存加密货币数据: %s", err)
 	}
 
 	if baseQuote, ok := apiResponse.Data.Quote[toFiat]; ok {

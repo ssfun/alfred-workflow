@@ -8,8 +8,8 @@ import (
 
 // Modifier 定义了 Alfred 结果的修饰键（如 Cmd, Opt, Ctrl）。
 type Modifier struct {
-	// 修正：使用正确的类型 aw.ModKey
-	Key      aw.ModKey
+	// 修正：兼容 awgo 版本，使用 string 保存修饰键
+	Key      string
 	Subtitle string
 	Arg      string
 }

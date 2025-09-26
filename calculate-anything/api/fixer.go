@@ -60,9 +60,9 @@ func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duratio
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Error.Info)
 	}
 
-	// 修正：使用正确的日志记录方法 wf.Log.Printf()
+	// 修正：使用正确的日志记录方法 wf.Logger().Printf()
 	if err := wf.Cache.StoreJSON(fixerCacheKey, apiResponse); err != nil {
-		wf.Log.Printf("无法缓存汇率数据: %s", err)
+		wf.Logger().Printf("无法缓存汇率数据: %s", err)
 	}
 
 	return &apiResponse, nil
