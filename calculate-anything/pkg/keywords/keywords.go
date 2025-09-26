@@ -1,65 +1,48 @@
 // calculate-anything/pkg/keywords/keywords.go
 package keywords
 
-import "strings"
+import (
+	"calculate-anything/pkg/i18n"
+	"strings"
+)
 
-// KeywordMap 定义了从用户友好词汇到标准单位/货币代码的映射
-var KeywordMap = map[string]string{
-	// 货币 (部分示例)
-	"dollars":    "USD",
-	"dollar":     "USD",
-	"euros":      "EUR",
-	"euro":       "EUR",
-	"yen":        "JPY",
-	"pounds":     "GBP",
-	"pound":      "GBP",
-	"dolares":    "USD", // 西班牙语示例
-	"pesos":      "MXN",
+// PreprocessQuery 是智能解析器的第一步。
+// 它接收原始查询和加载的语言包，然后返回一个清理过的、更易于机器解析的字符串。
+// 例如: "100 euros to dollars" -> "100 eur usd"
+func PreprocessQuery(query string, langPack *i18n.LanguagePack) string {
+	// 如果语言包加载失败，为避免程序崩溃，直接返回原始查询
+	if langPack == nil {
+		return query
+	}
 
-	// 单位 (部分示例)
-	"kilometers": "km",
-	"kilometer":  "km",
-	"meters":     "m",
-	"meter":      "m",
-	"ounces":     "oz",
-	"ounce":      "oz",
-	"hakunamatata": "year", // README 中的有趣示例
-
-	// 更多...
-}
-
-// StopWords 是在解析前需要被移除的词
-var StopWords = []string{
-	"to", "in", "as", "a", "=", "equals", "como", "en", "es",
-}
-
-// PreprocessQuery 清理和规范化查询字符串
-func PreprocessQuery(query string) string {
-	// 替换关键字
-	// 为了避免部分匹配 (e.g., "romanian" 中的 "oman")，我们按词分割处理
+	// 将查询按词分割，并转为小写，以便匹配
 	words := strings.Fields(strings.ToLower(query))
-	
-	// 替换关键字
+
+	// 步骤 1: 替换关键字
+	// 遍历每个词，如果它在语言包的关键字映射中，则替换为标准代码。
 	for i, word := range words {
-		if replacement, ok := KeywordMap[word]; ok {
+		if replacement, ok := langPack.Keywords[word]; ok {
 			words[i] = replacement
 		}
 	}
-	
-	// 移除停用词
+
+	// 步骤 2: 移除停用词
 	var cleanedWords []string
 	for _, word := range words {
 		isStopWord := false
-		for _, stopWord := range StopWords {
+		// 检查当前词是否在停用词列表中
+		for _, stopWord := range langPack.StopWords {
 			if word == stopWord {
 				isStopWord = true
 				break
 			}
 		}
+		// 如果不是停用词，则将其保留
 		if !isStopWord {
 			cleanedWords = append(cleanedWords, word)
 		}
 	}
 
+	// 将清理后的词重新组合成一个字符串
 	return strings.Join(cleanedWords, " ")
 }
