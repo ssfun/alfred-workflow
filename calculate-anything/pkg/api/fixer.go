@@ -11,14 +11,18 @@ import (
 	"github.com/deanishe/awgo"
 )
 
-const fixerAPIURL = "http://data.fixer.io/api/latest?access_key=%s"
-const fixerCacheKey = "fixer_rates"
+const (
+	// Fixer.io API 的最新汇率端点
+	fixerAPIURL = "http://data.fixer.io/api/latest?access_key=%s"
+	// 汇率数据的缓存键
+	fixerCacheKey = "fixer_rates"
+)
 
-// FixerResponse mirrors the JSON structure from the fixer.io API
+// FixerResponse 镜像 fixer.io API 的 JSON 响应结构
 type FixerResponse struct {
 	Success   bool               `json:"success"`
 	Timestamp int64              `json:"timestamp"`
-	Base      string             `json:"base"`
+	Base      string             `json:"base"` // 基础货币 (免费版通常是 EUR)
 	Date      string             `json:"date"`
 	Rates     map[string]float64 `json:"rates"`
 	Error     struct {
@@ -28,26 +32,22 @@ type FixerResponse struct {
 	} `json:"error"`
 }
 
-// GetExchangeRates fetches exchange rates from fixer.io, using cache if available.
+// GetExchangeRates 从 fixer.io 获取最新汇率，优先使用缓存。
 func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duration) (*FixerResponse, error) {
+	// 如果未配置 API 密钥，则返回错误
 	if apiKey == "" {
 		return nil, fmt.Errorf("Fixer.io API 密钥未配置")
 	}
 
-	// 使用 awgo 的缓存机制
-	cachedRates := func() (*FixerResponse, error) {
-		var rates FixerResponse
-		if err := wf.Cache.LoadJSON(fixerCacheKey, &rates); err != nil {
-			return nil, err
-		}
-		return &rates, nil
-	}
-
+	// 检查是否存在有效缓存
 	if wf.Cache.Exists(fixerCacheKey) && !wf.Cache.Expired(fixerCacheKey, cacheDuration) {
-		return cachedRates()
+		var rates FixerResponse
+		if err := wf.Cache.LoadJSON(fixerCacheKey, &rates); err == nil {
+			return &rates, nil
+		}
 	}
 
-	// 如果缓存不存在或已过期，则从 API 获取
+	// 如果没有有效缓存，则从 API 获取数据
 	url := fmt.Sprintf(fixerAPIURL, apiKey)
 	resp, err := http.Get(url)
 	if err != nil {
@@ -56,54 +56,39 @@ func GetExchangeRates(wf *aw.Workflow, apiKey string, cacheDuration time.Duratio
 	defer resp.Body.Close()
 
 	var apiResponse FixerResponse
+	// 解析 JSON 响应
 	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
 		return nil, fmt.Errorf("解析 API 响应失败: %w", err)
 	}
 
+	// 检查 API 是否返回错误
 	if !apiResponse.Success {
 		return nil, fmt.Errorf("API 错误: %s", apiResponse.Error.Info)
 	}
 
-	// 存入缓存
+	// 将获取到的新汇率数据存入缓存
 	if err := wf.Cache.StoreJSON(fixerCacheKey, apiResponse); err != nil {
-		// 即使缓存失败也继续执行，只是下次会重新请求
-		wf.Logf("无法缓存汇率数据: %s", err)
+		// 记录缓存错误，但不中断主流程
+		wf.Logger().Printf("无法缓存汇率数据: %s", err)
 	}
 
 	return &apiResponse, nil
 }
 
-// ConvertCurrency performs the currency conversion using the fetched rates.
+// ConvertCurrency 使用获取到的汇率数据进行货币转换。
 func ConvertCurrency(rates *FixerResponse, from, to string, amount float64) (float64, error) {
+	// 统一转换为大写以匹配汇率表
 	from = strings.ToUpper(from)
 	to = strings.ToUpper(to)
-	
-    // Fixer.io 的免费计划基础货币是 EUR
-	base := rates.Base 
 
-	// 如果源货币就是基础货币
-	if from == base {
-		toRate, ok := rates.Rates[to]
-		if !ok {
-			return 0, fmt.Errorf("无效的目标货币代码: %s", to)
-		}
-		return amount * toRate, nil
-	}
+	// Fixer.io 免费版的基础货币总是 EUR
+	base := rates.Base
 
-	// 如果目标货币是基础货币
-	if to == base {
-		fromRate, ok := rates.Rates[from]
-		if !ok {
-			return 0, fmt.Errorf("无效的源货币代码: %s", from)
-		}
-		return amount / fromRate, nil
-	}
-
-
-	// 通过基础货币进行转换
+	// 获取源货币和目标货币相对于基础货币的汇率
 	fromRate, okFrom := rates.Rates[from]
 	toRate, okTo := rates.Rates[to]
 
+	// 如果源货币或目标货币的代码无效，则返回错误
 	if !okFrom {
 		return 0, fmt.Errorf("无效的源货币代码: %s", from)
 	}
@@ -111,7 +96,8 @@ func ConvertCurrency(rates *FixerResponse, from, to string, amount float64) (flo
 		return 0, fmt.Errorf("无效的目标货币代码: %s", to)
 	}
 
-	// (amount / fromRate) 将 amount 转换为基础货币(EUR)
-	// 然后乘以 toRate 转换为目标货币
+	// 转换逻辑：
+	// 1. (amount / fromRate) 将输入的金额从源货币转换为基础货币 (EUR)
+	// 2. 然后乘以 toRate，将基础货币金额转换为目标货币
 	return (amount / fromRate) * toRate, nil
 }
