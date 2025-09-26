@@ -1,8 +1,8 @@
-// calculate-anything-go/pkg/parser/parser.go
+// calculate-anything/pkg/parser/parser.go
 package parser
 
 import (
-	"calculate-anything-go/pkg/keywords"
+	"calculate-anything/pkg/keywords"
 	"regexp"
 	"strconv"
 	"strings"
