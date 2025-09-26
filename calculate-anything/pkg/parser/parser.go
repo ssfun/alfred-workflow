@@ -18,8 +18,11 @@ var (
 	// e.g., "120 + 30%", "15% of 50"
 	percentageRegex = regexp.MustCompile(`(?i)^([\d.,]+)\s*([+\-]|plus|minus)\s*([\d.,]+)%$`)
 	percentageOfRegex = regexp.MustCompile(`(?i)^([\d.,]+)% of ([\d.,]+)$`)
+    // 新增: "40 as a % of 50"
+	percentageAsOfRegex = regexp.MustCompile(`(?i)^([\d.,]+)\s*(?:as a|is what)?\s*% of\s*([\d.,]+)$`)
 	// e.g., "12px", "2rem to pt"
 	pxEmRemRegex  = regexp.MustCompile(`(?i)^([\d.,]+)\s*(px|em|rem|pt)(?:\s*(?:to|in)\s*(px|em|rem|pt))?$`)
+	
 )
 
 // Parse 接收原始查询字符串并尝试解析它
@@ -82,12 +85,12 @@ func parseUnit(q string) *ParsedQuery {
 	return nil
 }
 
-func parsePercentage(q string) *ParsedQuery {
+func parsePercentage(q string) *parser.ParsedQuery {
     // 匹配 "120 + 30%"
 	matches := percentageRegex.FindStringSubmatch(q)
 	if len(matches) == 4 {
-		return &ParsedQuery{
-			Type:      PercentageQuery,
+		return &parser.ParsedQuery{
+			Type:      parser.PercentageQuery,
 			Input:     q,
 			BaseValue: parseAmount(matches[1]),
 			Action:    normalizeAction(matches[2]),
@@ -98,12 +101,24 @@ func parsePercentage(q string) *ParsedQuery {
     // 匹配 "15% of 50"
     matches = percentageOfRegex.FindStringSubmatch(q)
     if len(matches) == 3 {
-        return &ParsedQuery{
-            Type:      PercentageQuery,
+        return &parser.ParsedQuery{
+            Type:      parser.PercentageQuery,
             Input:     q,
             Action:    "of",
             Percent:   parseAmount(matches[1]),
             BaseValue: parseAmount(matches[2]),
+        }
+    }
+
+    // 新增: 匹配 "40 as a % of 50"
+    matches = percentageAsOfRegex.FindStringSubmatch(q)
+    if len(matches) == 3 {
+        return &parser.ParsedQuery{
+            Type:      parser.PercentageQuery,
+            Input:     q,
+            Action:    "as % of",
+            Amount:    parseAmount(matches[1]), // 40
+            BaseValue: parseAmount(matches[2]), // 50
         }
     }
 
